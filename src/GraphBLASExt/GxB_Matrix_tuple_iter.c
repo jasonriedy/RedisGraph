@@ -59,28 +59,6 @@ GrB_Info GxB_MatrixTupleIter_iterate_row
 	return (GrB_SUCCESS) ;
 }
 
-GrB_Info GxB_MatrixTupleIter_jump_to_row
-(
-	GxB_MatrixTupleIter *iter,
-	GrB_Index rowIdx
-) {
-	GB_WHERE("GxB_MatrixTupleIter_jump_to_row (iter, rowIdx)") ;
-	GB_RETURN_IF_NULL(iter) ;
-
-	// Deplete iterator, should caller ignore returned error.
-	_EmptyIterator(iter) ;
-
-	if(rowIdx < 0 || rowIdx >= iter->nrows) {
-		return (GB_ERROR(GrB_INVALID_INDEX, (GB_LOG, "Row index out of range"))) ;
-	}
-
-	GrB_Matrix_nvals(&(iter->nvals), iter->A) ;
-	iter->nnz_idx = iter->A->p[rowIdx] ;
-	iter->row_idx = rowIdx ;
-	iter->p = 0 ;
-	return (GrB_SUCCESS) ;
-}
-
 GrB_Info GxB_MatrixTupleIter_iterate_range
 (
 	GxB_MatrixTupleIter *iter,  // iterator to use
