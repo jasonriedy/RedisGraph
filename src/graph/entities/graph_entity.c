@@ -5,6 +5,7 @@
 */
 
 #include <stdio.h>
+#include <inttypes.h>
 #include <assert.h>
 #include "graph_entity.h"
 #include "../../query_ctx.h"
@@ -152,7 +153,7 @@ void GraphEntity_ToString(const GraphEntity *e, char **buffer, size_t *bufferLen
 
 	// write id
 	if(format & ENTITY_ID) {
-		*bytesWritten += snprintf(*buffer + *bytesWritten, *bufferLen, "%llu", ENTITY_GET_ID(e));
+		*bytesWritten += snprintf(*buffer + *bytesWritten, *bufferLen, "%" PRIu64, ENTITY_GET_ID(e));
 	}
 
 	// write label
