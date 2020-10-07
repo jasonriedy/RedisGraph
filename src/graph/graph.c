@@ -11,6 +11,7 @@
 #include "../util/arr.h"
 #include "../util/qsort.h"
 #include "../GraphBLASExt/GxB_Delete.h"
+#include "../GraphBLASExt/GxB_Matrix_tuple_iter.h"
 #include "../util/rmalloc.h"
 #include "../util/datablock/oo_datablock.h"
 
