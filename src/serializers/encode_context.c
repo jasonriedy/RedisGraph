@@ -28,7 +28,7 @@ void GraphEncodeContext_Reset(GraphEncodeContext *ctx) {
 	ctx->datablock_iterator = NULL;
 	// Avoid leaks in case or reset during encodeing.
 	if(ctx->matrix_tuple_iterator != NULL) {
-		GxB_MatrixTupleIter_free(ctx->matrix_tuple_iterator);
+		GxB_MatrixTupleIter_free(&ctx->matrix_tuple_iterator);
 	}
 	ctx->matrix_tuple_iterator = NULL;
 	ctx->current_relation_matrix_id = 0;
@@ -108,14 +108,14 @@ void GraphEncodeContext_SetCurrentRelationID(GraphEncodeContext *ctx,
 	ctx->current_relation_matrix_id = current_relation_matrix_id;
 }
 
-GxB_MatrixTupleIter *GraphEncodeContext_GetMatrixTupleIterator(
+GxB_MatrixTupleIter GraphEncodeContext_GetMatrixTupleIterator(
 	const GraphEncodeContext *ctx) {
 	assert(ctx);
 	return ctx->matrix_tuple_iterator;
 }
 
 void GraphEncodeContext_SetMatrixTupleIterator(GraphEncodeContext *ctx,
-											   GxB_MatrixTupleIter *iter) {
+											   GxB_MatrixTupleIter iter) {
 	assert(ctx);
 	ctx->matrix_tuple_iterator = iter;
 }

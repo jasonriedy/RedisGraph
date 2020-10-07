@@ -22,7 +22,7 @@ typedef struct {
 	NodeID dest_label_id;       // ID of destination node label if known.
 	const char *dest_label;     // Label of destination node if known.
 	EdgeTraverseCtx *edge_ctx;  // Edge collection data if the edge needs to be set.
-	GxB_MatrixTupleIter *iter;  // Iterator over M.
+	GxB_MatrixTupleIter iter;  // Iterator over M.
 	int srcNodeIdx;             // Source node index into record.
 	int destNodeIdx;            // Destination node index into record.
 	uint recordCount;           // Number of held records.

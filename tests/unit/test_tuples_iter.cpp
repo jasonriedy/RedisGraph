@@ -90,7 +90,7 @@ TEST_F(TuplesTest, RandomVectorTest) {
 	// Get an iterator over all nonzero elements.
 	//--------------------------------------------------------------------------
 
-	GxB_MatrixTupleIter *iter;
+	GxB_MatrixTupleIter iter;
 	GxB_MatrixTupleIter_new(&iter, (GrB_Matrix)A);
 	GrB_Index col;
 
@@ -111,7 +111,7 @@ TEST_F(TuplesTest, RandomVectorTest) {
 	//--------------------------------------------------------------------------
 	free(I);
 	free(X);
-	GxB_MatrixTupleIter_free(iter);
+	GxB_MatrixTupleIter_free(&iter);
 	GrB_Vector_free(&A);
 }
 
@@ -135,7 +135,7 @@ TEST_F(TuplesTest, VectorIteratorTest) {
 	// Get an iterator over all vector nonzero elements.
 	//--------------------------------------------------------------------------
 
-	GxB_MatrixTupleIter *iter;
+	GxB_MatrixTupleIter iter;
 	GxB_MatrixTupleIter_new(&iter, (GrB_Matrix)A);
 	GrB_Index col;
 
@@ -167,7 +167,7 @@ TEST_F(TuplesTest, VectorIteratorTest) {
 	//--------------------------------------------------------------------------
 	// Clean up.
 	//--------------------------------------------------------------------------
-	GxB_MatrixTupleIter_free(iter);
+	GxB_MatrixTupleIter_free(&iter);
 	GrB_Vector_free(&A);
 }
 
@@ -207,7 +207,7 @@ TEST_F(TuplesTest, RandomMatrixTest) {
 	// Get an iterator over all matrix nonzero elements.
 	//--------------------------------------------------------------------------
 
-	GxB_MatrixTupleIter *iter;
+	GxB_MatrixTupleIter iter;
 	GxB_MatrixTupleIter_new(&iter, A);
 	GrB_Index row;
 	GrB_Index col;
@@ -233,7 +233,7 @@ TEST_F(TuplesTest, RandomMatrixTest) {
 	free(X);
 	free(I_expected);
 	free(J_expected);
-	GxB_MatrixTupleIter_free(iter);
+	GxB_MatrixTupleIter_free(&iter);
 	GrB_Matrix_free(&A);
 }
 
@@ -252,7 +252,7 @@ TEST_F(TuplesTest, MatrixIteratorTest) {
 	// Get an iterator over all matrix nonzero elements.
 	//--------------------------------------------------------------------------
 
-	GxB_MatrixTupleIter *iter;
+	GxB_MatrixTupleIter iter;
 	GxB_MatrixTupleIter_new(&iter, A);
 	GrB_Index row;
 	GrB_Index col;
@@ -287,7 +287,7 @@ TEST_F(TuplesTest, MatrixIteratorTest) {
 	//--------------------------------------------------------------------------
 	// Clean up.
 	//--------------------------------------------------------------------------
-	GxB_MatrixTupleIter_free(iter);
+	GxB_MatrixTupleIter_free(&iter);
 	GrB_Matrix_free(&A);
 }
 
@@ -304,7 +304,7 @@ TEST_F(TuplesTest, ColumnIteratorTest) {
 	GrB_Index col;
 	GrB_Index nrows = nvals;
 	GrB_Index ncols = nvals;
-	GxB_MatrixTupleIter *iter;
+	GxB_MatrixTupleIter iter;
 	GxB_MatrixTupleIter_new(&iter, A);
 
 	for(int j = 0; j < ncols; j++) {
@@ -340,7 +340,7 @@ TEST_F(TuplesTest, ColumnIteratorTest) {
 
 		GrB_Vector_free(&v);
 	}
-	GxB_MatrixTupleIter_free(iter);
+	GxB_MatrixTupleIter_free(&iter);
 	GrB_Matrix_free(&A);
 }
 
@@ -354,7 +354,7 @@ TEST_F(TuplesTest, ColumnIteratorEmptyMatrixTest) {
 	GrB_Index row;
 	GrB_Index col;
 	GrB_Index ncols = nvals;
-	GxB_MatrixTupleIter *iter;
+	GxB_MatrixTupleIter iter;
 	GxB_MatrixTupleIter_new(&iter, A);
 
 	for(int j = 0; j < ncols; j++) {
@@ -372,7 +372,7 @@ TEST_F(TuplesTest, ColumnIteratorEmptyMatrixTest) {
 		ASSERT_TRUE(depleted);
 	}
 
-	GxB_MatrixTupleIter_free(iter);
+	GxB_MatrixTupleIter_free(&iter);
 	GrB_Matrix_free(&A);
 }
 
@@ -403,7 +403,7 @@ TEST_F(TuplesTest, IteratorRange) {
 	}
 
 	// Create iterator.
-	GxB_MatrixTupleIter *iter;
+	GxB_MatrixTupleIter iter;
 	GxB_MatrixTupleIter_new(&iter, A);
 
 	// Check for invalid index exception for range iteration.
@@ -459,5 +459,7 @@ TEST_F(TuplesTest, IteratorRange) {
 	}
 	GxB_MatrixTupleIter_next(iter, &row, &col, &depleted);
 	ASSERT_TRUE(depleted);
+
+	GxB_MatrixTupleIter_free(&iter);
 }
 
