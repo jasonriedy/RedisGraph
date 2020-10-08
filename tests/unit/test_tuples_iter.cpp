@@ -181,8 +181,8 @@ TEST_F(TuplesTest, RandomMatrixTest) {
 
      GrB_Matrix A, B, C;
 	GrB_Index nvals = 0;
-	GrB_Index nrows = 1024;
-	GrB_Index ncols = 1024;
+	GrB_Index nrows = 32;//1024;
+	GrB_Index ncols = 32;//1024;
 	GrB_Index *I = (GrB_Index *)malloc(sizeof(GrB_Index) * ncols * nrows);
 	GrB_Index *J = (GrB_Index *)malloc(sizeof(GrB_Index) * ncols * nrows);
 	bool *X = (bool *)malloc(sizeof(bool) * ncols * nrows);

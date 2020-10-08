@@ -61,7 +61,7 @@ LIBS=$(LIBGRAPHBLAS) $(REDISEARCH) $(LIBXXHASH) $(LIBCYPHER-PARSER)
 DEPS=$(CC_OBJECTS) $(RAX) $(LIBS)
 
 # Build and run a test for each cpp file in directory
-TEST_SOURCES = $(wildcard *.cpp)
+TEST_SOURCES = test_tuples_iter.cpp # $(wildcard *.cpp)
 TEST_OBJECTS = $(patsubst %.cpp, %.o, $(TEST_SOURCES))
 TEST_EXECUTABLES = $(patsubst %.cpp, %.run, $(TEST_SOURCES))
 

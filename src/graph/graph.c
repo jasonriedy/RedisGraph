@@ -21,6 +21,7 @@ static inline int omp_get_thread_num (void) { return 0; }
 #include "../util/arr.h"
 #include "../util/qsort.h"
 #include "../GraphBLASExt/GxB_Delete.h"
+#include "../GraphBLASExt/GxB_Matrix_tuple_iter.h"
 #include "../util/rmalloc.h"
 #include "../util/datablock/oo_datablock.h"
 
@@ -577,8 +578,7 @@ void Graph_GetNodeEdges(const Graph *g, const Node *n, GRAPH_EDGE_DIR dir, int e
         GrB_Vector v;
 	NodeID srcNodeID;
 	NodeID destNodeID;
-        GrB_Index nrows, ncols;
-        GrB_Info info;
+	GxB_MatrixTupleIter tupleIter;
 
 	if(edgeType == GRAPH_UNKNOWN_RELATION) return;
 
@@ -593,48 +593,35 @@ void Graph_GetNodeEdges(const Graph *g, const Node *n, GRAPH_EDGE_DIR dir, int e
         // Outgoing.
 	if(dir == GRAPH_EDGE_DIR_OUTGOING || dir == GRAPH_EDGE_DIR_BOTH) {
 		srcNodeID = ENTITY_GET_ID(n);
-                GrB_Matrix_nrows (&nrows, M);
-                GrB_Vector_new (&v, GrB_BOOL, nrows);
-                GrB_Vector_setElement_BOOL (v, true, srcNodeID);
-                GrB_vxm (v, GrB_NULL, GrB_NULL, GxB_LOR_LAND_BOOL, v, M, desc) ;
-
-                GrB_Type vtype;
-                GrB_Index n, nvals, *I;
-                bool *X;
-                GrB_wait();
-                GxB_Vector_export (&v, &vtype, &n, &nvals, &I, (void**)&X, GrB_NULL);
-                assert (vtype == GrB_BOOL);
-
-                for (GrB_Index k = 0; k < nvals; ++k)
-                        Graph_GetEdgesConnectingNodes(g, srcNodeID, I[k], edgeType, edges);
-
-                free (X);
-                free (I);
-                // v is freed in GxB_Vector_export
+		GxB_MatrixTupleIter_iterate_row(tupleIter, srcNodeID);
+		while(true) {
+			bool depleted = false;
+			GxB_MatrixTupleIter_next(tupleIter, NULL, &destNodeID, &depleted);
+			if(depleted) break;
+			// Collect all edges connecting this source node to each of its destinations.
+			Graph_GetEdgesConnectingNodes(g, srcNodeID, destNodeID, edgeType, edges);
+		}
+		GxB_MatrixTupleIter_free(&tupleIter);
 	}
 
 	// Incoming.
 	if(dir == GRAPH_EDGE_DIR_INCOMING || dir == GRAPH_EDGE_DIR_BOTH) {
                 GrB_Descriptor_set (desc, GrB_INP1, GrB_TRAN);
 		destNodeID = ENTITY_GET_ID(n);
-                GrB_Matrix_ncols (&ncols, M);
-                GrB_Vector_new (&v, GrB_BOOL, ncols);
-                GrB_Vector_setElement_BOOL (v, true, destNodeID);
-                GrB_vxm (v, GrB_NULL, GrB_NULL, GxB_LOR_LAND_BOOL, v, M, desc) ;
+		GxB_MatrixTupleIter_iterate_row(tupleIter, destNodeID);
 
-                GrB_Type vtype;
-                GrB_Index n, nvals, *I;
-                bool *X;
-                GrB_wait();
-                GxB_Vector_export (&v, &vtype, &n, &nvals, &I, (void**)&X, GrB_NULL);
-                assert (vtype == GrB_BOOL);
+		while(true) {
+			bool depleted = false;
+			GxB_MatrixTupleIter_next(tupleIter, NULL, &srcNodeID, &depleted);
+			if(depleted) break;
+			/* Collect all edges connecting this destination node to each of its sources.
+			 * This call will only collect edges of the appropriate relationship type,
+			 * if one is specified. */
+			Graph_GetEdgesConnectingNodes(g, srcNodeID, destNodeID, edgeType, edges);
+		}
 
-                for (GrB_Index k = 0; k < nvals; ++k)
-                        Graph_GetEdgesConnectingNodes(g, I[k], destNodeID, edgeType, edges);
-
-                free (X);
-                free (I);
-                // v is freed in GxB_Vector_export
+		// Clean up
+		GxB_MatrixTupleIter_free(&tupleIter);
 	}
 
         GrB_free (&desc);
@@ -841,7 +828,9 @@ static void _BulkDeleteNodes(Graph *g, Node *nodes, uint node_count,
 
 	GrB_Matrix adj;                     // Adjacency matrix.
 	GrB_Matrix tadj;                    // Transposed adjacency matrix.
-
+	GrB_Descriptor desc;                // GraphBLAS descriptor.
+	GxB_MatrixTupleIter adj_iter;      // iterator over the adjacency matrix.
+	GxB_MatrixTupleIter tadj_iter;     // iterator over the transposed adjacency matrix.
         GrB_Index *node_idx = NULL;
 
 	adj = Graph_GetAdjacencyMatrix(g);
@@ -965,8 +954,13 @@ static void _BulkDeleteNodes(Graph *g, Node *nodes, uint node_count,
 	}
 
 	// Clean up.
-        free (val);
-	GrB_free (&tmp);
+	GrB_free(&A);
+	GrB_free(&desc);
+	GrB_free(&Mask);
+	GrB_free(&thunk);
+	GrB_free(&Nodes);
+	GxB_MatrixTupleIter_free(&adj_iter);
+	GxB_MatrixTupleIter_free(&tadj_iter);
 }
 
 static void _BulkDeleteEdges(Graph *g, Edge *edges, size_t edge_count) {
