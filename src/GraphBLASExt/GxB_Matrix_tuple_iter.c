@@ -24,10 +24,6 @@ struct GBr_MatrixTupleIter_opaque {
 
      GrB_Vector v;
      GrB_Index v_pattern_len, *v_pattern, v_pattern_storage_len;
-
-#if !defined(NDEBUG)
-     GrB_Index nvals_so_far, nvals_cur_so_far;
-#endif
 };
 
 #include "GxB_Matrix_tuple_iter.h"
@@ -71,10 +67,6 @@ GxB_MatrixTupleIter_reuse (GxB_MatrixTupleIter gxb_iter, GrB_Matrix A)
      struct GBr_MatrixTupleIter_opaque *iter = gxb_iter;
      if (iter == NULL) return GrB_NULL_POINTER;
 
-#if !defined(NDEBUG)
-     iter->nvals_so_far = 0;
-     iter->nvals_cur_so_far = 0;
-#endif
      return iter_init (iter, A, 0, IDX_ALL);
 }
 
@@ -92,12 +84,8 @@ GxB_MatrixTupleIter_iterate_range (GxB_MatrixTupleIter gxb_iter, GrB_Index start
      struct GBr_MatrixTupleIter_opaque *iter = gxb_iter;
      if (iter == NULL) return GrB_NULL_POINTER;
 
-     if (startRowIdx > endRowIdx) return GrB_INVALID_VALUE;
+     if (startRowIdx > endRowIdx) return GrB_INVALID_INDEX;
 
-#if !defined(NDEBUG)
-     iter->nvals_so_far = 0;
-     iter->nvals_cur_so_far = 0;
-#endif
      return iter_init (iter, iter->A, startRowIdx, endRowIdx+1);
 }
 
@@ -120,33 +108,24 @@ iter_forward_from (struct GBr_MatrixTupleIter_opaque *iter, GrB_Index begin)
      GrB_Index v_nv;
      GrB_Info info = GrB_SUCCESS;
 
-     //assert (begin < end);
-#if !defined(NDEBUG)
-     iter->nvals_cur_so_far = 0;
-#endif
      assert (iter->offset == iter->v_pattern_len); // Requires both to be zero on initialization / reuse.
-     /* fprintf (stderr, "\t\tforwarding [%ld, %ld)\n", (long)begin, (long)end); */
 
-     /* fprintf (stderr, "  cur %ld %ld\n", (long)iter->current, (long)begin); */
+     if (begin == end) goto info_out;
 
      v_nv = 0;
      do {
-          /* fprintf (stderr, "  %ld\n", begin); */
           info = GrB_extract (v, GrB_NULL, GrB_NULL, A, GrB_ALL, n, begin, desc);
           if (info != GrB_SUCCESS) goto info_out;
           info = GrB_Vector_nvals (&v_nv, v);
           if (info != GrB_SUCCESS) goto info_out;
-          /* fprintf (stderr, "\t\t\t %ld: deg %ld  (so far %ld/%ld)   %ld\n", (long)begin, (long)v_nv, (long)iter->nvals_cur_so_far, (long)iter->v_pattern_len, (long)iter->nvals_so_far); */
           if (v_nv != 0) break;
           ++begin;
      } while (begin < end);
      if (begin == end) {
           GrB_Index nvals;
           GrB_Matrix_nvals (&nvals, iter->A);
-          /* fprintf (stderr, "\t\t... hit end %ld/%ld\n", (long)iter->nvals_so_far, (long)nvals); */
           goto info_out; // No more entries, so "clean up" and report success.
      }
-     /* fprintf (stderr, "  cur2 %ld %ld\n", (long)iter->current, (long)begin); */
      
      // begin holds the current row index, and v holds the current row.
 
@@ -263,7 +242,7 @@ GxB_MatrixTupleIter_next (GxB_MatrixTupleIter gxb_iter, GrB_Index *row, GrB_Inde
 
      // First, check if already depleted.
      if (iter->current == iter->end) {
-          if (depleted)  { /* fprintf (stderr, "ugh1\n"); */ *depleted = true; }
+          if (depleted)  *depleted = true;
           return GrB_SUCCESS;
      }
 
@@ -273,13 +252,13 @@ GxB_MatrixTupleIter_next (GxB_MatrixTupleIter gxb_iter, GrB_Index *row, GrB_Inde
           // The current vector is depleted, so forward.
           info = iter_forward_from (iter, iter->current + 1);
           if (info != GrB_SUCCESS) {
-               if (depleted) { /* fprintf (stderr, "ugh3\n"); */ *depleted = true; }
+               if (depleted) *depleted = true;
                return info;
           }
      }
 
      if (iter->current == iter->end) {
-          if (depleted) { /* fprintf (stderr, "ugh2\n"); */ *depleted = true; }
+          if (depleted) *depleted = true;
           return GrB_SUCCESS;
      }
 
@@ -287,15 +266,10 @@ GxB_MatrixTupleIter_next (GxB_MatrixTupleIter gxb_iter, GrB_Index *row, GrB_Inde
           if (col) *col = iter->v_pattern[iter->offset];
           if (row) *row = 0;
      } else {
-          if (col) *col = iter->current;
-          if (row) *row = iter->v_pattern[iter->offset];
+          if (col) *col = iter->v_pattern[iter->offset];
+          if (row) *row = iter->current;
      }
      ++iter->offset;
-#if !defined(NDEBUG)
-     ++iter->nvals_so_far;
-     ++iter->nvals_cur_so_far;
-     /* fprintf (stderr, "\t\t\tugh %ld / %ld\n", (long)iter->nvals_cur_so_far, (long)iter->v_pattern_len); */
-#endif
      if (depleted) *depleted = false;
      return GrB_SUCCESS;
 }
