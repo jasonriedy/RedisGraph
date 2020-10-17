@@ -53,7 +53,7 @@ static void _populateIndex(Index *idx) {
 	NodeID node_id;
 	Graph *g = gc->g;
 	int label_id = s->id;
-	GxB_MatrixTupleIter *it;
+	GxB_MatrixTupleIter it;
 	const GrB_Matrix label_matrix = Graph_GetLabelMatrix(g, label_id);
 	GxB_MatrixTupleIter_new(&it, label_matrix);
 
@@ -66,7 +66,7 @@ static void _populateIndex(Index *idx) {
 		Graph_GetNode(g, node_id, &node);
 		Index_IndexNode(idx, &node);
 	}
-	GxB_MatrixTupleIter_free(it);
+	GxB_MatrixTupleIter_free(&it);
 }
 
 // Create a new index.
