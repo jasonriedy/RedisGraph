@@ -13,7 +13,7 @@
 #include "entities/qg_node.h"
 #include "entities/qg_edge.h"
 #include "../ast/ast_shared.h"
-#include "../../deps/GraphBLAS/Include/GraphBLAS.h"
+#include <GraphBLAS.h>
 
 typedef struct {
 	QGNode **nodes;             // Nodes contained in QueryGraph

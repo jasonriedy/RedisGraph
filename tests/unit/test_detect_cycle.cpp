@@ -11,7 +11,7 @@ extern "C" {
 #endif
 
 #include "../../src/util/rmalloc.h"
-#include "../../deps/GraphBLAS/Include/GraphBLAS.h"
+#include <GraphBLAS.h>
 #include "../../src/graph/query_graph.h"
 #include "../../src/algorithms/algorithms.h"
 

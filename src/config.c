@@ -10,7 +10,7 @@
 #include <string.h>
 #include <limits.h>
 #include "util/redis_version.h"
-#include "../deps/GraphBLAS/Include/GraphBLAS.h"
+#include <GraphBLAS.h>
 
 //-----------------------------------------------------------------------------
 // Configuration parameters

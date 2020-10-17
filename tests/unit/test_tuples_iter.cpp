@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-#include "../../deps/GraphBLAS/Include/GraphBLAS.h"
+#include <GraphBLAS.h>
 #include "../../src/GraphBLASExt/GxB_Matrix_tuple_iter.h"
 #include "../../src/util/rmalloc.h"
 

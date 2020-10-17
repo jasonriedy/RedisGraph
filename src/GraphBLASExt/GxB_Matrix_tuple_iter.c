@@ -6,7 +6,9 @@
 #include <stdint.h>
 
 #include "../RG.h"
-#include "../../deps/GraphBLAS/Include/GraphBLAS.h"
+#include <assert.h>
+
+#include <GraphBLAS.h>
 
 // Not great, but handy.
 #define IDX_ALL ((uint64_t)-1)

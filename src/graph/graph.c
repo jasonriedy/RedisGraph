@@ -264,12 +264,9 @@ void _MatrixSynchronize(const Graph *g, RG_Matrix rg_matrix) {
 	// Lock the matrix.
 	RG_Matrix_Lock(rg_matrix);
 
-	bool pending = false;
-	GxB_Matrix_Pending(m, &pending);
-
 	// If the matrix has pending operations or requires
 	// a resize, enter critical section.
-	if(pending || (n_rows != dims) || (n_cols != dims)) {
+	if((n_rows != dims) || (n_cols != dims)) {
 		// Double-check if resize is necessary.
 		GrB_Matrix_nrows(&n_rows, m);
 		GrB_Matrix_ncols(&n_cols, m);

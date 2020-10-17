@@ -7,7 +7,7 @@
 #pragma once
 
 #include <stdint.h>
-#include "../../deps/GraphBLAS/Include/GraphBLAS.h"
+#include <GraphBLAS.h>
 
 /* Clears entry at position M[row,col]
  * If M[row,col] isn't empty then M's NNZ is reduced by one. */
