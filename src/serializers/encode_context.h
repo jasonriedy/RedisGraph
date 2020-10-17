@@ -12,6 +12,7 @@
 #include "../graph/graph.h"
 #include "../util/datablock/datablock.h"
 #include "../../deps/GraphBLAS/Include/GraphBLAS.h"
+#include "../GraphBLASExt/GxB_Matrix_tuple_iter.h"
 #include "../graph/entities/graph_entity.h"
 #include "rax.h"
 
