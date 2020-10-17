@@ -15,7 +15,7 @@
 // Include Query contxt.
 #include "../query_ctx.h"
 // Include GraphBLAS.
-#include "../../deps/GraphBLAS/Include/GraphBLAS.h"
+#include <GraphBLAS.h>
 // Utils.
 #include "../util/arr.h"
 #include "../util/rmalloc.h"

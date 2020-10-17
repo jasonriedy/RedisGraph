@@ -8,7 +8,7 @@
 
 #include "../../value.h"
 #include "graph_entity.h"
-#include "../../../deps/GraphBLAS/Include/GraphBLAS.h"
+#include <GraphBLAS.h>
 
 typedef struct {
 	Entity *entity;     // MUST be the first member of Node

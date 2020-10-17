@@ -10,7 +10,7 @@
 #include "shared/traverse_functions.h"
 #include "../execution_plan.h"
 #include "../../arithmetic/algebraic_expression.h"
-#include "../../../deps/GraphBLAS/Include/GraphBLAS.h"
+#include <GraphBLAS.h>
 
 /* OP Traverse */
 typedef struct {

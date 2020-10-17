@@ -37,6 +37,8 @@ CMakeCache.txt
 DartConfiguration.tcl
 lemon
 deps/GraphBLAS/Config/GraphBLAS.h.tmp
+deps/GraphBLAS/README.md
+src/make.inc
 
 # Project
 .cproject
