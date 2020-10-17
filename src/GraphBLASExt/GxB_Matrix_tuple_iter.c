@@ -2,7 +2,8 @@
 // GxB_MatrixTupleIter: Iterates over matrix none zero values
 //------------------------------------------------------------------------------
 
-#include "GB.h"
+#include "../../deps/GraphBLAS/Source/GB.h"
+#include "GxB_Matrix_tuple_iter.h"
 
 // Sets iterator as depleted.
 static inline void _EmptyIterator
