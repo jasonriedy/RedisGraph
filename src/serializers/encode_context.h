@@ -34,7 +34,7 @@ typedef struct {
 	uint64_t offset;                            // Number of encoded entities in the current state.
 	DataBlockIterator *datablock_iterator;      // Datablock iterator to be saved in the context.
 	uint current_relation_matrix_id;            // Current encoded relationship matrix.
-	GxB_MatrixTupleIter *matrix_tuple_iterator; // Matrix tuple iterator to be saved in the context.
+	GxB_MatrixTupleIter matrix_tuple_iterator; // Matrix tuple iterator to be saved in the context.
 	EdgeID *multiple_edges_array;               // Multiple edges array, save in the context.
 	uint multiple_edges_current_index;          // The current index of the encoded edges array.
 	NodeID multiple_edges_src_id;               // The current edges array sourc node id.
@@ -88,10 +88,10 @@ void GraphEncodeContext_SetCurrentRelationID(GraphEncodeContext *ctx,
 											 uint current_relation_matrix_id);
 
 // Retrieve stored matrix tuple iterator.
-GxB_MatrixTupleIter *GraphEncodeContext_GetMatrixTupleIterator(const GraphEncodeContext *ctx);
+GxB_MatrixTupleIter GraphEncodeContext_GetMatrixTupleIterator(const GraphEncodeContext *ctx);
 
 // Set graph encoding context matrix tuple iterator - keep iterator state for further usage.
-void GraphEncodeContext_SetMatrixTupleIterator(GraphEncodeContext *ctx, GxB_MatrixTupleIter *iter);
+void GraphEncodeContext_SetMatrixTupleIterator(GraphEncodeContext *ctx, GxB_MatrixTupleIter iter);
 
 // Sets a multiple edges array and the current index, for saving the state of multiple edges encoding.
 void GraphEncodeContext_SetMutipleEdgesArray(GraphEncodeContext *ctx, EdgeID *edges,
