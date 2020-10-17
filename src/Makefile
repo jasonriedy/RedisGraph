@@ -70,7 +70,7 @@ CC_SOURCES += $(wildcard $(SOURCEDIR)/serializers/decoders/current/*.c)
 CC_SOURCES += $(wildcard $(SOURCEDIR)/serializers/decoders/current/*/*.c)
 CC_SOURCES += $(wildcard $(SOURCEDIR)/serializers/decoders/prev/*.c)
 CC_SOURCES += $(wildcard $(SOURCEDIR)/serializers/decoders/prev/*/*.c)
-GBEXT_SOURCES = $(wildcard $(SOURCEDIR)/GraphBLASExt/*.c)
+CC_SOURCES += $(wildcard $(SOURCEDIR)/GraphBLASExt/*.c)
 CC_SOURCES += $(wildcard $(SOURCEDIR)/grouping/*.c)
 CC_SOURCES += $(wildcard $(SOURCEDIR)/index/*.c)
 CC_SOURCES += $(wildcard $(SOURCEDIR)/ast/*.c)
@@ -91,15 +91,9 @@ CC_SOURCES += $(wildcard $(SOURCEDIR)/util/cache/*.c)
 CC_OBJECTS = $(patsubst %.c, %.o, $(CC_SOURCES) )
 export CC_OBJECTS
 
-GBEXT_OBJECTS = $(patsubst %.c, %.o, $(GBEXT_SOURCES) )
-export GBEXT_OBJECTS
-
-$(GBEXT_OBJECTS) : CFLAGS+=-I$(realpath ../deps/GraphBLAS/Source) -I$(realpath ../deps/GraphBLAS/Source/Template)
-CC_OBJECTS += $(GBEXT_OBJECTS)
-
 # .d files for each c file. These make sure that changing a header file
 # will also change the dependent .c files of it
-CC_DEPS = $(patsubst %.c, %.d, $(CC_SOURCES) $(GBEXT_SOURCES))
+CC_DEPS = $(patsubst %.c, %.d, $(CC_SOURCES))
 
 # Library dependencies
 RAX=../deps/rax/rax.o
