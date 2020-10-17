@@ -11,7 +11,7 @@
 #include "../execution_plan.h"
 #include "../../graph/graph.h"
 #include "../../graph/entities/node.h"
-#include "../../../deps/GraphBLAS/Include/GraphBLAS.h"
+#include <GraphBLAS.h>
 #include "../../util/range/unsigned_range.h"
 
 /* NodeByLabelScan, scans entire label. */

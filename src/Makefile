@@ -4,9 +4,20 @@ uname_S := $(shell sh -c 'uname -s 2>/dev/null || echo not')
 # Paths to deps.
 RAX_DIR = ../deps/rax
 XXHASH_DIR = ../deps/xxHash
-GRAPHBLAS_DIR = ../deps/GraphBLAS
 REDISEARCH_DIR = ../deps/RediSearch/src
 LIBCYPHER-PARSER_DIR = ../deps/libcypher-parser/lib/src
+
+-include make.inc
+
+# A separate section for GraphBLAS so users know which variables to
+# set.  To build against a system-wide GraphBLAS, a user can ignore
+# GRAPHBLAS_DIR.  For example, "GRAPHBLAS_LIB=-lgraphblas" and
+# "GRAPHBLAS_INC=" (blank) work on Debian with libsuitesparse-dev
+# installed.
+GRAPHBLAS_DIR ?= ../deps/GraphBLAS
+GRAPHBLAS_LIB_DEFAULT = $(GRAPHBLAS_DIR)/build/libgraphblas.a
+GRAPHBLAS_LIB ?= $(GRAPHBLAS_LIB_DEFAULT)
+GRAPHBLAS_CPPFLAGS ?= -I$(GRAPHBLAS_DIR)/Include
 
 # if DEBUG env var is set, we compile with "debug" cflags
 DEBUGFLAGS = -g -ggdb -O3
@@ -98,12 +109,11 @@ CC_DEPS = $(patsubst %.c, %.d, $(CC_SOURCES))
 # Library dependencies
 RAX=../deps/rax/rax.o
 LIBXXHASH=../deps/xxHash/libxxhash.a
-GRAPHBLAS=../deps/GraphBLAS/build/libgraphblas.a
 REDISEARCH=../deps/RediSearch/build/libredisearch.a
 LIBCYPHER-PARSER=../deps/libcypher-parser/lib/src/.libs/libcypher-parser.a
 
 # Compilation deps for the module
-LIBS=$(RAX) $(GRAPHBLAS) $(REDISEARCH) $(LIBXXHASH) $(LIBCYPHER-PARSER)
+LIBS=$(RAX) $(GRAPHBLAS_LIB) $(REDISEARCH) $(LIBXXHASH) $(LIBCYPHER-PARSER)
 MODULE= $(LIBS) $(CC_OBJECTS)
 
 REDISGRAPH_CC=$(QUIET_CC)$(CC)
@@ -121,7 +131,7 @@ endif
 # Compile C file while generating a .d file for it
 %.o: %.c
 %.o: %.c
-	$(REDISGRAPH_CC) $(CFLAGS) -I. -I$(GRAPHBLAS_DIR)/Include -I$(RAX_DIR) -I$(LIBCYPHER-PARSER_DIR) -I$(XXHASH_DIR) -I$(REDISEARCH_DIR) -c $< -o $@ -MMD -MF $(@:.o=.d)
+	$(REDISGRAPH_CC) $(CFLAGS) -I. $(GRAPHBLAS_CPPFLAGS) -I$(RAX_DIR) -I$(LIBCYPHER-PARSER_DIR) -I$(XXHASH_DIR) -I$(REDISEARCH_DIR) -c $< -o $@ -MMD -MF $(@:.o=.d)
 
 all: redisgraph.so
 
@@ -137,11 +147,13 @@ $(LIBXXHASH):
 .PHONY: $(LIBXXHASH)
 
 # Build GraphBLAS only if library does not already exists.
-$(GRAPHBLAS):
-ifeq (,$(wildcard $(GRAPHBLAS)))
+ifeq ($(GRAPHBLAS_LIB_DEFAULT),$(GRAPHBLAS_LIB))
+$(GRAPHBLAS_LIB):
+ifeq (,$(wildcard $(GRAPHBLAS_LIB)))
 	@$(MAKE) -C ../deps/GraphBLAS CMAKE_OPTIONS="-DCMAKE_C_COMPILER='$(CC)'" static_only
 endif
-.PHONY: $(GRAPHBLAS)
+.PHONY: $(GRAPHBLAS_LIB)
+endif
 
 $(REDISEARCH):
 ifeq (,$(wildcard $(REDISEARCH)))
@@ -171,7 +183,7 @@ parser:
 
 # Build the module...
 redisgraph.so: $(MODULE)
-	$(REDISGRAPH_CC) -o $@ $(CC_OBJECTS) $(LIBS) $(SHOBJ_LDFLAGS) -lc -lm
+	$(REDISGRAPH_CC) -o $@ $(CC_OBJECTS) $(LIBS) $(SHOBJ_LDFLAGS) $(GRAPHBLAS_LIB) -lc -lm
 
 clean:
 	@find . -name '*.[oad]' -type f -delete
@@ -179,7 +191,9 @@ clean:
 ifeq ($(ALL),1)
 	@$(MAKE) -C ../deps/rax clean
 	@$(MAKE) -C ../deps/xxHash clean
+ifeq ($(GRAPHBLAS_LIB_DEFAULT), $(GRAPHBLAS_LIB))
 	@$(MAKE) -C ../deps/GraphBLAS clean
+endif
 	@$(MAKE) -C ../deps/libcypher-parser clean
 	rm -rf ../deps/RediSearch/build/      # Directly delete the RediSearch build artifacts
 endif

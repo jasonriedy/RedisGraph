@@ -16,7 +16,7 @@ extern "C"
 #include "../../src/graph/graph.h"
 #include "../../src/util/rmalloc.h"
 #include "../../src/util/simple_timer.h"
-#include "../../deps/GraphBLAS/Include/GraphBLAS.h"
+#include <GraphBLAS.h>
 #include "../../src/util/datablock/datablock_iterator.h"
 
 #ifdef __cplusplus
