@@ -173,7 +173,7 @@ static SIValue *Proc_BFS_Step(ProcedureCtx *ctx) {
 	NodeID id;
 	GrB_Info res;
 	bool depleted;
-	GxB_MatrixTupleIter *iter;
+	GxB_MatrixTupleIter iter;
 
 	UNUSED(res);
 	res = GxB_MatrixTupleIter_new(&iter, (GrB_Matrix)bfs_ctx->nodes);
@@ -215,7 +215,7 @@ static SIValue *Proc_BFS_Step(ProcedureCtx *ctx) {
 
 	// Clean up.
 	array_free(edge);
-	GxB_MatrixTupleIter_free(iter);
+	GxB_MatrixTupleIter_free(&iter);
 
 	return bfs_ctx->output;
 }

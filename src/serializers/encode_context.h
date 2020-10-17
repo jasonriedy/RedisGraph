@@ -16,7 +16,7 @@
 #include "../graph/entities/graph_entity.h"
 #include "rax.h"
 
-// Encoding states
+// Represent a graph encoding state.
 typedef enum {
 	ENCODE_STATE_INIT,          // encoding initial state
 	ENCODE_STATE_NODES,         // encoding nodes
@@ -26,8 +26,8 @@ typedef enum {
 	ENCODE_STATE_GRAPH_SCHEMA,  // encoding graph schemas
 	ENCODE_STATE_FINAL          // encoding final state
 } EncodeState;
-
-// Header information encoded for every payload
+  
+// A struct that maintains the state of a graph encoding to RDB or encode from RDB.
 typedef struct {
 	bool *multi_edge;                // true if R[i] contain a multi edge entry
 	uint64_t key_count;              // number of virtual keys + primary key
@@ -51,7 +51,7 @@ typedef struct {
 	uint current_relation_matrix_id;            // Current encoded relationship matrix.
 	uint multiple_edges_current_index;          // The current index of the encoded edges array.
 	DataBlockIterator *datablock_iterator;      // Datablock iterator to be saved in the context.
-	GxB_MatrixTupleIter *matrix_tuple_iterator; // Matrix tuple iterator to be saved in the context.
+	GxB_MatrixTupleIter matrix_tuple_iterator; // Matrix tuple iterator to be saved in the context.
 } GraphEncodeContext;
 
 // Creates a new graph encoding context.
@@ -104,10 +104,10 @@ void GraphEncodeContext_SetCurrentRelationID(GraphEncodeContext *ctx,
 											 uint current_relation_matrix_id);
 
 // Retrieve stored matrix tuple iterator.
-GxB_MatrixTupleIter *GraphEncodeContext_GetMatrixTupleIterator(const GraphEncodeContext *ctx);
+GxB_MatrixTupleIter GraphEncodeContext_GetMatrixTupleIterator(const GraphEncodeContext *ctx);
 
 // Set graph encoding context matrix tuple iterator - keep iterator state for further usage.
-void GraphEncodeContext_SetMatrixTupleIterator(GraphEncodeContext *ctx, GxB_MatrixTupleIter *iter);
+void GraphEncodeContext_SetMatrixTupleIterator(GraphEncodeContext *ctx, GxB_MatrixTupleIter iter);
 
 // Sets a multiple edges array and the current index, for saving the state of multiple edges encoding.
 void GraphEncodeContext_SetMutipleEdgesArray(GraphEncodeContext *ctx, EdgeID *edges,
