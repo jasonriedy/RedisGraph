@@ -64,9 +64,13 @@ DataBlock *DataBlock_New(uint64_t itemCap, uint itemSize, fpDestructor fp);
 
 // Make sure datablock can accommodate at least k items.
 void DataBlock_Accommodate(DataBlock *dataBlock, int64_t k);
+// Make sure datablock can accommodate at least k *more* items.
+void DataBlock_AccommodateAdditional(DataBlock *dataBlock, int64_t k);
 
 // Returns an iterator which scans entire datablock.
 DataBlockIterator *DataBlock_Scan(const DataBlock *dataBlock);
+
+DataBlockItemHeader *DataBlock_GetItemHeader(const DataBlock *dataBlock, uint64_t idx);
 
 // Get item at position idx
 void *DataBlock_GetItem(const DataBlock *dataBlock, uint64_t idx);

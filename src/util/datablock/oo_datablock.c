@@ -19,7 +19,7 @@
 #define GET_ITEM_BLOCK(dataBlock, idx) \
     dataBlock->blocks[ITEM_INDEX_TO_BLOCK_INDEX(idx)]
 
-static inline DataBlockItemHeader *DataBlock_GetItemHeader(const DataBlock *dataBlock,
+static inline DataBlockItemHeader *ooDataBlock_GetItemHeader(const DataBlock *dataBlock,
 														   uint64_t idx) {
 	Block *block = GET_ITEM_BLOCK(dataBlock, idx);
 	idx = ITEM_POSITION_WITHIN_BLOCK(idx);
@@ -29,7 +29,7 @@ static inline DataBlockItemHeader *DataBlock_GetItemHeader(const DataBlock *data
 inline void *DataBlock_AllocateItemOutOfOrder(DataBlock *dataBlock, uint64_t idx) {
 	// Check if idx<=data block's current capacity. If needed, allocate additional blocks.
 	DataBlock_Accommodate(dataBlock, idx);
-	DataBlockItemHeader *item_header = DataBlock_GetItemHeader(dataBlock, idx);
+	DataBlockItemHeader *item_header = ooDataBlock_GetItemHeader(dataBlock, idx);
 	MARK_HEADER_AS_NOT_DELETED(item_header);
 	dataBlock->itemCount++;
 	return ITEM_DATA(item_header);
@@ -38,7 +38,7 @@ inline void *DataBlock_AllocateItemOutOfOrder(DataBlock *dataBlock, uint64_t idx
 inline void DataBlock_MarkAsDeletedOutOfOrder(DataBlock *dataBlock, uint64_t idx) {
 	// Check if idx<=data block's current capacity. If needed, allocate additional blocks.
 	DataBlock_Accommodate(dataBlock, idx);
-	DataBlockItemHeader *item_header = DataBlock_GetItemHeader(dataBlock, idx);
+	DataBlockItemHeader *item_header = ooDataBlock_GetItemHeader(dataBlock, idx);
 	// Delete
 	MARK_HEADER_AS_DELETED(item_header);
 	dataBlock->deletedIdx = array_append(dataBlock->deletedIdx, idx);

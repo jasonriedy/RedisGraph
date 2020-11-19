@@ -7,6 +7,7 @@
 #include "bulk_insert.h"
 #include "../schema/schema.h"
 #include "../util/rmalloc.h"
+#include "../util/datablock/datablock.h"
 #include <errno.h>
 #include <assert.h>
 
@@ -100,19 +101,64 @@ int _BulkInsert_ProcessNodeFile(RedisModuleCtx *ctx, GraphContext *gc, const cha
 	unsigned int prop_count;
 	Attribute_ID *prop_indicies = _BulkInsert_ReadHeader(gc, SCHEMA_NODE, data, &data_idx, &label_id,
 														 &prop_count);
+        DataBlock *nodes = gc->g->nodes;
 
-	while(data_idx < data_len) {
-		Node n;
-		Graph_CreateNode(gc->g, label_id, &n);
-		for(unsigned int i = 0; i < prop_count; i++) {
-			SIValue value = _BulkInsert_ReadProperty(data, &data_idx);
-			// Cypher does not support NULL as a property value.
-			// If we encounter one here, simply skip it.
-			if(SI_TYPE(value) == T_NULL) continue;
-			GraphEntity_AddProperty((GraphEntity *)&n, prop_indicies[i], value);
-		}
-	}
+        /* General strategy: Separate node record allocation from label matrix updates. */
+        /* Assume node ids are allocated sequentially. */
+        /* Also ignore deleted entries during a bulk insertion */
+        DataBlock_AccommodateAdditional(nodes, data_len);
+        const uint64_t first_id = nodes->itemCount;
 
+        GrB_Index *I = rm_malloc (data_len * sizeof(*I));
+        if (I == NULL) {
+             free(prop_indicies);
+             return BULK_FAIL;
+        }
+
+        size_t I_idx = 0;
+        uint64_t id = first_id;
+        while (data_idx < data_len) {
+             I[I_idx++] = id++;
+
+             DataBlockItemHeader *item_header = DataBlock_GetItemHeader(nodes, id);
+             MARK_HEADER_AS_NOT_DELETED(item_header);
+
+             Entity *en = (Entity*)ITEM_DATA(item_header);
+             en->prop_count = 0;
+             en->properties = NULL;
+
+             for(unsigned int i = 0; i < prop_count; i++) {
+                  SIValue value = _BulkInsert_ReadProperty(data, &data_idx);
+                  // Cypher does not support NULL as a property value.
+                  // If we encounter one here, simply skip it.
+                  if(SI_TYPE(value) == T_NULL) continue;
+                  GraphEntity_AddProperty((GraphEntity *)en, prop_indicies[i], value);
+             }
+        }
+
+        if (label_id != GRAPH_NO_LABEL) {
+             RG_Matrix matrix = gc->g->labels[label_id];
+             GrB_Matrix m = matrix->grb_matrix;
+             GrB_Matrix tmp;
+             GrB_Index nr;
+             GrB_Info info;
+             info = GrB_Matrix_nrows(&nr, m);
+             assert (info == GrB_SUCCESS); // Really should roll back the insertion.
+             if (nr < id) {
+                  info = GxB_Matrix_resize (m, nr, nr);
+                  assert (info == GrB_SUCCESS);
+             }
+             info = GrB_Matrix_new (&tmp, GrB_BOOL, nr, nr);
+             assert (info != GrB_SUCCESS);
+             bool *X = rm_malloc (id * sizeof(*X));
+             info = GrB_Matrix_build (tmp, I, I, X, id, GrB_NULL);
+             assert (info != GrB_SUCCESS);
+             info = GxB_subassign (m, GrB_NULL, GrB_NULL, tmp, I, id, I, id, GrB_NULL);
+             assert (info != GrB_SUCCESS);
+             GrB_free (&tmp);
+        }
+
+        rm_free (I);
 	free(prop_indicies);
 	return BULK_OK;
 }

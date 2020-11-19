@@ -130,6 +130,9 @@ void Graph_AllocateEdges(
 	size_t n                // Number of edges to create.
 );
 
+// Create a single node's data structures and retun that node.
+void Graph_CreateNodeData (Graph *g, Node *n);
+
 // Create a single node and labels it accordingly.
 // Return newly created node.
 void Graph_CreateNode(
