@@ -57,7 +57,7 @@ static inline bool _DataBlock_IndexOutOfBounds(const DataBlock *dataBlock, uint6
 	return (idx >= (dataBlock->itemCount + array_len(dataBlock->deletedIdx)));
 }
 
-static inline DataBlockItemHeader *DataBlock_GetItemHeader(const DataBlock *dataBlock,
+inline DataBlockItemHeader *DataBlock_GetItemHeader(const DataBlock *dataBlock,
 														   uint64_t idx) {
 	Block *block = GET_ITEM_BLOCK(dataBlock, idx);
 	idx = ITEM_POSITION_WITHIN_BLOCK(idx);
@@ -101,6 +101,11 @@ void DataBlock_Accommodate(DataBlock *dataBlock, int64_t k) {
 	}
 }
 
+// Make sure datablock can accommodate at least current + k items.
+void DataBlock_AccommodateAdditional(DataBlock *dataBlock, int64_t k) {
+     DataBlock_Accommodate(dataBlock, dataBlock->itemCount + k);
+}
+
 void *DataBlock_GetItem(const DataBlock *dataBlock, uint64_t idx) {
 	assert(dataBlock);
 
@@ -116,7 +121,7 @@ void *DataBlock_GetItem(const DataBlock *dataBlock, uint64_t idx) {
 
 void *DataBlock_AllocateItem(DataBlock *dataBlock, uint64_t *idx) {
 	// Make sure we've got room for items.
-	if(dataBlock->itemCount >= dataBlock->itemCap) {
+	if(dataBlock->itemCount - array_len(dataBlock->deletedIdx) >= dataBlock->itemCap) {
 		// Allocate twice as much items then we currently hold.
 		uint newCap = dataBlock->itemCount * 2;
 		uint requiredAdditionalBlocks = ITEM_COUNT_TO_BLOCK_COUNT(newCap) - dataBlock->blockCount;

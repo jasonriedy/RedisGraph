@@ -451,15 +451,20 @@ void Graph_GetEdgesConnectingNodes(const Graph *g, NodeID srcID, NodeID destID, 
 	}
 }
 
-void Graph_CreateNode(Graph *g, int label, Node *n) {
-	assert(g);
+void Graph_CreateNodeData (Graph *g, Node *n) {
+     assert (g);
 
-	NodeID id;
-	Entity *en = DataBlock_AllocateItem(g->nodes, &id);
-	n->id = id;
-	n->entity = en;
-	en->prop_count = 0;
-	en->properties = NULL;
+     NodeID id;
+     Entity *en = DataBlock_AllocateItem(g->nodes, &id);
+     n->id = id;
+     n->entity = en;
+     en->prop_count = 0;
+     en->properties = NULL;
+}
+
+void Graph_CreateNode(Graph *g, int label, Node *n) {
+        Graph_CreateNodeData (g, n);
+        NodeID id = n->id;
 
 	if(label != GRAPH_NO_LABEL) {
 		// Try to set matrix at position [id, id]
