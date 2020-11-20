@@ -99,6 +99,9 @@ void Graph_WriterLeave(Graph *g);
 /* Choose the current matrix synchronization policy. */
 void Graph_SetMatrixPolicy(Graph *g, MATRIX_POLICY policy);
 
+/* Return the current matrix synchronization policy. */
+MATRIX_POLICY Graph_GetMatrixPolicy(Graph *g);
+
 /* Synchronize and resize all matrices in graph. */
 void Graph_ApplyAllPending(Graph *g);
 

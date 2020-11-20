@@ -28,9 +28,6 @@ void _MGraph_BulkInsert(void *args) {
 
 	GraphContext *gc = NULL;
 
-	// Number of entities already created
-	size_t initial_node_count = 0;
-
 	// Number of entities being created in this query
 	// (declared as long longs to match Redis conversion function)
 	long long nodes_in_query;
@@ -65,18 +62,11 @@ void _MGraph_BulkInsert(void *args) {
 	argc -= 2; // already read node count and edge count
 
 	gc = GraphContext_Retrieve(ctx, rs_graph_name, false, true);
-	initial_node_count = Graph_NodeCount(gc->g);
 
 	// Lock the graph for writing.
 	Graph_AcquireWriteLock(gc->g);
 
-	// Disable matrix synchronization for bulk insert operation
-	Graph_SetMatrixPolicy(gc->g, RESIZE_TO_CAPACITY);
-
-	// Allocate or extend datablocks to accommodate all incoming entities
-	Graph_AllocateNodes(gc->g, nodes_in_query + initial_node_count);
-
-	int rc = BulkInsert(ctx, gc, argv, argc);
+	int rc = BulkInsert(ctx, gc, nodes_in_query, relations_in_query, argv, argc);
 
 	if(rc == BULK_FAIL) {
 		// If insertion failed, clean up keyspace and free added entities.
