@@ -186,14 +186,30 @@ int _BulkInsert_ProcessNodeFile(RedisModuleCtx *ctx, GraphContext *gc,
 	return BULK_OK;
 }
 
-int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc, const char *data,
-									size_t data_len) {
+int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc, const size_t num_orig_nodes,
+                                    GrB_Index *I, GrB_Index *J,
+                                    const char *data, size_t data_len) {
 	size_t data_idx = 0;
+
+        /*
+          There is a single relation_id for the batch.  Assume unique across all batches.
+
+          The matrices already have been resized.
+
+          Assume the new region is empty for the relation's matrices.  There may be multi-edges here.
+
+          Not necessarily true for the adjacency matrices.  Those must be built and eWideAdd-ed.  Or just OR-in the relation matrix built here.
+         */
 
         /* XXX:
            first pass is to allocate records and add properties
            second pass extracts the ids
            then extend the appropriate matrices
+
+           accumulate the IJ
+           extract what exists for the reltype_id
+           update/allocate entries in that subgraph
+           replace
          */
 	int reltype_id;
 	unsigned int prop_count;
@@ -202,6 +218,8 @@ int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc, const
 														 &prop_count);
 	NodeID src;
 	NodeID dest;
+        size_t num_ids = 0;
+        size_t max_node_id = 0;
 
 	while(data_idx < data_len) {
 		Edge e;
@@ -212,6 +230,10 @@ int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc, const
 		dest = *(NodeID *)&data[data_idx];
 		data_idx += sizeof(NodeID);
 
+                // Allocate the edge record, assuming src and dest are unique for this reltype_id
+
+
+                // Process and add relation properties to this edge's record
 		Graph_ConnectNodes(gc->g, src, dest, reltype_id, &e);
 
 		if(prop_count == 0) continue;
@@ -226,6 +248,15 @@ int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc, const
 		}
 	}
 
+        /*
+          Ensure the relation matrices are large enough (and sanity check the adj matrices).
+          Build a mask.
+          Fetch the slice.
+          For all in the mask, add to their data
+          For all not in the mask, allocate their data
+         */
+
+done_with_relations:
 	free(prop_indicies);
 	return BULK_OK;
 }
@@ -246,8 +277,9 @@ int _BulkInsert_InsertNodes(RedisModuleCtx *ctx, GraphContext *gc, long long nod
 	return BULK_OK;
 }
 
-int _BulkInsert_Insert_Edges(RedisModuleCtx *ctx, GraphContext *gc, int token_count,
-							 RedisModuleString ***argv, int *argc) {
+int _BulkInsert_Insert_Edges(RedisModuleCtx *ctx, GraphContext *gc, const size_t num_orig_nodes,
+                             GrB_Index *I, GrB_Index *J, 
+                             int token_count, RedisModuleString ***argv, int *argc) {
 	int rc;
 	for(int i = 0; i < token_count; i ++) {
 		size_t len;
@@ -255,7 +287,7 @@ int _BulkInsert_Insert_Edges(RedisModuleCtx *ctx, GraphContext *gc, int token_co
 		const char *data = RedisModule_StringPtrLen(**argv, &len);
 		*argv += 1;
 		*argc -= 1;
-		rc = _BulkInsert_ProcessRelationFile(ctx, gc, data, len);
+		rc = _BulkInsert_ProcessRelationFile(ctx, gc, num_orig_nodes, I, J, data, len);
 		assert(rc == BULK_OK);
 	}
 	return BULK_OK;
@@ -265,17 +297,15 @@ int BulkInsert(RedisModuleCtx *ctx, GraphContext *gc,
                long long nodes_in_query, long long relations_in_query, 
                RedisModuleString **argv, int argc) {
         int retval = BULK_FAIL;
+        GrB_Index *I = NULL, *J = NULL;
 	if(argc < 2) {
 		RedisModule_ReplyWithError(ctx, "Bulk insert format error, failed to parse bulk insert sections.");
 		return BULK_FAIL;
 	}
 
-	long long initial_node_count = Graph_NodeCount(gc->g);
 	// Disable matrix synchronization for bulk insert operation
         MATRIX_POLICY prev_policy = Graph_GetMatrixPolicy (gc->g);
 	Graph_SetMatrixPolicy(gc->g, RESIZE_TO_CAPACITY);
-	// Allocate or extend datablocks and matrices to accommodate all incoming entities
-	Graph_AllocateNodes(gc->g, nodes_in_query + initial_node_count);
 
 	// Read the number of node tokens
 	long long node_token_count;
@@ -293,23 +323,31 @@ int BulkInsert(RedisModuleCtx *ctx, GraphContext *gc,
 	}
 	argc -= 2;
 
+        size_t num_orig_nodes = gc->g->nodes->itemCount;
 	if(node_token_count > 0) {
+             long long initial_node_count = Graph_NodeCount(gc->g);
+             // Allocate or extend datablocks and matrices to accommodate all incoming entities
+             Graph_AllocateNodes(gc->g, nodes_in_query + initial_node_count);
              retval = _BulkInsert_InsertNodes(ctx, gc, nodes_in_query, node_token_count, &argv, &argc);
              if(retval != BULK_OK) goto done;
 	}
 
 	if(relation_token_count > 0) {
-             retval = _BulkInsert_Insert_Edges(ctx, gc, relation_token_count, &argv, &argc);
+             DataBlock_AccommodateAdditional (gc->g->edges, relations_in_query);
+             I = rm_malloc (relations_in_query * sizeof (*I));
+             J = rm_malloc (relations_in_query * sizeof (*J));
+             retval = _BulkInsert_Insert_Edges(ctx, gc, num_orig_nodes, I, J, relation_token_count, &argv, &argc);
              if(retval != BULK_OK) goto done;
 	}
 
 	assert(argc == 0);
 
-	Graph_SetMatrixPolicy(gc->g, RESIZE_TO_CAPACITY);
 	retval = BULK_OK;
 
 done:
         Graph_SetMatrixPolicy(gc->g, prev_policy);
+        if (I != NULL) rm_free (I);
+        if (J != NULL) rm_free (J);
         return retval;
 }
 
