@@ -365,28 +365,29 @@ void Graph_AllocateNodes(Graph *g, size_t n) {
         // Resize the associated GraphBLAS matrices
         GrB_Index dim;
         GrB_Info info;
+        size_t required_dim = n + DataBlock_DeletedItemsCount (g->nodes); // See Graph_RequiredMatrixDim
 
         info = GrB_Matrix_nrows (&dim, adj);
         assert (info == GrB_SUCCESS);
-        if (dim >= n) return;
+        if (dim >= required_dim) return;
 
         GrB_Matrix adj = Graph_GetAdjacencyMatrix(g);
 	GrB_Matrix tadj = Graph_GetTransposedAdjacencyMatrix(g);
         const int num_relations = Graph_RelationTypeCount (g);
         const int maintain_transpose = Config_MaintainTranspose ();
 
-        info = GxB_Matrix_resize (adj, n, n);
+        info = GxB_Matrix_resize (adj, required_dim, required_dim);
         assert (info == GrB_SUCCESS);
-        info = GxB_Matrix_resize (tadj, n, n);
+        info = GxB_Matrix_resize (tadj, required_dim, required_dim);
         assert (info == GrB_SUCCESS);
 
         for (int r = 0; r < num_relations; ++r) {
              GrB_Matrix relationMat = Graph_GetRelationMatrix(g, r);
-             info = GxB_Matrix_resize (relationMat, n, n);
+             info = GxB_Matrix_resize (relationMat, required_dim, required_dim);
              assert (info == GrB_SUCCESS);
              if (maintain_transpose) {
                   GrB_Matrix t_relationMat = Graph_GetTransposedRelationMatrix(g, r);
-                  info = GxB_Matrix_resize (t_relationMat, n, n);
+                  info = GxB_Matrix_resize (t_relationMat, required_dim, required_dim);
                   assert (info == GrB_SUCCESS);
              }
         }
