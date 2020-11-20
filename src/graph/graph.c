@@ -364,15 +364,16 @@ void Graph_AllocateNodes(Graph *g, size_t n) {
 
         // Resize the associated GraphBLAS matrices
         GrB_Index dim;
-        GrB_Matrix adj = Graph_GetAdjacencyMatrix(g);
-	GrB_Matrix tadj = Graph_GetTransposedAdjacencyMatrix(g);
-        const int num_relations = Graph_RelationTypeCount (g);
-        const int maintain_transpose = Config_MaintainTranspose ();
         GrB_Info info;
 
         info = GrB_Matrix_nrows (&dim, adj);
         assert (info == GrB_SUCCESS);
         if (dim >= n) return;
+
+        GrB_Matrix adj = Graph_GetAdjacencyMatrix(g);
+	GrB_Matrix tadj = Graph_GetTransposedAdjacencyMatrix(g);
+        const int num_relations = Graph_RelationTypeCount (g);
+        const int maintain_transpose = Config_MaintainTranspose ();
 
         info = GxB_Matrix_resize (adj, n, n);
         assert (info == GrB_SUCCESS);
@@ -384,7 +385,7 @@ void Graph_AllocateNodes(Graph *g, size_t n) {
              info = GxB_Matrix_resize (relationMat, n, n);
              assert (info == GrB_SUCCESS);
              if (maintain_transpose) {
-                  GrB_Matrix t_relationMat = Graph_GetRelationMatrix(g, r);
+                  GrB_Matrix t_relationMat = Graph_GetTransposedRelationMatrix(g, r);
                   info = GxB_Matrix_resize (t_relationMat, n, n);
                   assert (info == GrB_SUCCESS);
              }
