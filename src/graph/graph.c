@@ -252,6 +252,17 @@ void Graph_SetMatrixPolicy(Graph *g, MATRIX_POLICY policy) {
 	}
 }
 
+/* Return the current behavior for matrix creations and retrievals on this graph. */
+MATRIX_POLICY Graph_SetMatrixPolicy(Graph *g) {
+	switch(g->SynchronizeMatrix) {
+	case _MatrixSynchronize: return SYNC_AND_MINIMIZE_SPACE;
+	case _MatrixResizeToCapacity: return RESIZE_TO_CAPACITY;
+	case _MatrixNOP: return DISABLED;
+	default:
+		assert(false);
+	}
+}
+
 /* Synchronize and resize all matrices in graph. */
 void Graph_ApplyAllPending(Graph *g) {
 	RG_Matrix M;

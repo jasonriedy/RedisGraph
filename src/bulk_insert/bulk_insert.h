@@ -24,6 +24,8 @@
 int BulkInsert(
 	RedisModuleCtx *ctx,        // Redis thread-safe context.
 	GraphContext *gc,           // GraphContext hosting schemas and Graph.
+        long long nodes_in_query,   // Number of vertices in the query
+        long long relations_in_query, // Number of relations \propto number of edges in query
 	RedisModuleString **argv,   // Arguments passed to bulk insert command.
 	int argc                    // Number of elements in argv.
 );

@@ -232,47 +232,65 @@ int _BulkInsert_Insert_Edges(RedisModuleCtx *ctx, GraphContext *gc, int token_co
 	return BULK_OK;
 }
 
-int BulkInsert(RedisModuleCtx *ctx, GraphContext *gc, RedisModuleString **argv, int argc) {
-
+int BulkInsert(RedisModuleCtx *ctx, GraphContext *gc, 
+               long long nodes_in_query, long long relations_in_query, 
+               RedisModuleString **argv, int argc) {
+        int retval;
 	if(argc < 2) {
 		RedisModule_ReplyWithError(ctx, "Bulk insert format error, failed to parse bulk insert sections.");
 		return BULK_FAIL;
 	}
+
+	initial_node_count = Graph_NodeCount(gc->g);
+	// Disable matrix synchronization for bulk insert operation
+        MATRIX_POLICY prev_policy = Graph_GetMatrixPolicy (gc->g);
+	Graph_SetMatrixPolicy(gc->g, RESIZE_TO_CAPACITY);
+	// Allocate or extend datablocks and matrices to accommodate all incoming entities
+	Graph_AllocateNodes(gc->g, nodes_in_query + initial_node_count);
 
 	// Read the number of node tokens
 	long long node_token_count;
 	long long relation_token_count;
 	if(RedisModule_StringToLongLong(*argv++, &node_token_count)  != REDISMODULE_OK) {
 		RedisModule_ReplyWithError(ctx, "Error parsing number of node descriptor tokens.");
-		return BULK_FAIL;
+		retval = BULK_FAIL;
+                goto done;
 	}
 
 	if(RedisModule_StringToLongLong(*argv++, &relation_token_count)  != REDISMODULE_OK) {
 		RedisModule_ReplyWithError(ctx, "Error parsing number of relation descriptor tokens.");
-		return BULK_FAIL;
+		retval = BULK_FAIL;
+                goto done;
 	}
 	argc -= 2;
 
 	if(node_token_count > 0) {
-		int rc = _BulkInsert_InsertNodes(ctx, gc, node_token_count, &argv, &argc);
-		if(rc != BULK_OK) {
-			return BULK_FAIL;
-		} else if(argc == 0) {
-			return BULK_OK;
-		}
+             int rc = _BulkInsert_InsertNodes(ctx, gc, node_token_count, &argv, &argc);
+             if(rc != BULK_OK) {
+                  retval = BULK_FAIL;
+             } else if(argc == 0) {
+                  retval = BULK_OK;
+             }
+             goto done;
 	}
 
 	if(relation_token_count > 0) {
-		int rc = _BulkInsert_Insert_Edges(ctx, gc, relation_token_count, &argv, &argc);
-		if(rc != BULK_OK) {
-			return BULK_FAIL;
-		} else if(argc == 0) {
-			return BULK_OK;
-		}
+             int rc = _BulkInsert_Insert_Edges(ctx, gc, relation_token_count, &argv, &argc);
+             if(rc != BULK_OK) {
+                  retval = BULK_FAIL;
+             } else if(argc == 0) {
+                  retval = BULK_OK;
+             }
+             goto done;
 	}
 
 	assert(argc == 0);
 
-	return BULK_OK;
+	Graph_SetMatrixPolicy(gc->g, RESIZE_TO_CAPACITY);
+	retval = BULK_OK;
+
+done:
+        Graph_SetMatrixPolicy(gc->g, prev_policy);
+        return retval;
 }
 
