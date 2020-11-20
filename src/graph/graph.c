@@ -253,14 +253,15 @@ void Graph_SetMatrixPolicy(Graph *g, MATRIX_POLICY policy) {
 }
 
 /* Return the current behavior for matrix creations and retrievals on this graph. */
-MATRIX_POLICY Graph_SetMatrixPolicy(Graph *g) {
-	switch(g->SynchronizeMatrix) {
-	case _MatrixSynchronize: return SYNC_AND_MINIMIZE_SPACE;
-	case _MatrixResizeToCapacity: return RESIZE_TO_CAPACITY;
-	case _MatrixNOP: return DISABLED;
-	default:
-		assert(false);
-	}
+MATRIX_POLICY Graph_GetMatrixPolicy(Graph *g) {
+     if (g->SynchronizeMatrix == _MatrixSynchronize)
+          return SYNC_AND_MINIMIZE_SPACE;
+     if (g->SynchronizeMatrix == _MatrixResizeToCapacity)
+          return RESIZE_TO_CAPACITY;
+     if (g->SynchronizeMatrix == _MatrixNOP)
+          return DISABLED;
+     assert (false);
+     return -1;
 }
 
 /* Synchronize and resize all matrices in graph. */
@@ -367,11 +368,11 @@ void Graph_AllocateNodes(Graph *g, size_t n) {
         GrB_Info info;
         size_t required_dim = n + DataBlock_DeletedItemsCount (g->nodes); // See Graph_RequiredMatrixDim
 
+        GrB_Matrix adj = Graph_GetAdjacencyMatrix(g);
         info = GrB_Matrix_nrows (&dim, adj);
         assert (info == GrB_SUCCESS);
         if (dim >= required_dim) return;
 
-        GrB_Matrix adj = Graph_GetAdjacencyMatrix(g);
 	GrB_Matrix tadj = Graph_GetTransposedAdjacencyMatrix(g);
         const int num_relations = Graph_RelationTypeCount (g);
         const int maintain_transpose = Config_MaintainTranspose ();

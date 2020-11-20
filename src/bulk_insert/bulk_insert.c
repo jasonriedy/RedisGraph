@@ -93,33 +93,42 @@ static inline SIValue _BulkInsert_ReadProperty(const char *data, size_t *data_id
 	return v;
 }
 
-int _BulkInsert_ProcessNodeFile(RedisModuleCtx *ctx, GraphContext *gc, const char *data,
-								size_t data_len) {
+int _BulkInsert_ProcessNodeFile(RedisModuleCtx *ctx, GraphContext *gc, 
+                                long long nodes_in_query,
+                                const char *data,
+                                size_t data_len) {
 	size_t data_idx = 0;
 
 	int label_id;
 	unsigned int prop_count;
 	Attribute_ID *prop_indicies = _BulkInsert_ReadHeader(gc, SCHEMA_NODE, data, &data_idx, &label_id,
 														 &prop_count);
-        DataBlock *nodes = gc->g->nodes;
+        Graph *g = gc->g;
+        DataBlock *nodes = g->nodes;
 
-        /* General strategy: Separate node record allocation from label matrix updates. */
-        /* Assume node ids are allocated sequentially. */
-        /* Also ignore deleted entries during a bulk insertion */
-        DataBlock_AccommodateAdditional(nodes, data_len);
+        /* All nodes are pre-allocated and matrices extended in
+           bulk_insert().  nodes->itemCount has *not* been updated.
+           
+           The number of nodes in this "file" is not known, so this
+           routine makes two passes.  The first one adds properties
+           and counts.
+
+           If there is a label, the second pass extracts the ids to
+           update the label matrices.
+
+           This routine does *not* back-fill deleted node indices.
+           The allocated ids then begin at nodes->itemCount and only
+           increase.
+        */
+
         const uint64_t first_id = nodes->itemCount;
+        size_t num_ids = 0;
 
-        GrB_Index *I = rm_malloc (data_len * sizeof(*I));
-        if (I == NULL) {
-             free(prop_indicies);
-             return BULK_FAIL;
-        }
-
-        size_t I_idx = 0;
-        uint64_t id = first_id;
         while (data_idx < data_len) {
-             I[I_idx++] = id++;
-
+             // Cheat and inline datablock allocation.
+             const uint64_t id = nodes->itemCount++;
+             ++num_ids;
+             
              DataBlockItemHeader *item_header = DataBlock_GetItemHeader(nodes, id);
              MARK_HEADER_AS_NOT_DELETED(item_header);
 
@@ -137,28 +146,42 @@ int _BulkInsert_ProcessNodeFile(RedisModuleCtx *ctx, GraphContext *gc, const cha
         }
 
         if (label_id != GRAPH_NO_LABEL) {
-             RG_Matrix matrix = gc->g->labels[label_id];
-             GrB_Matrix m = matrix->grb_matrix;
+             GrB_Index *I = rm_malloc (num_ids * sizeof(*I));
+             assert (I != NULL);
+             bool *X = rm_malloc (num_ids * sizeof(*X));
+             assert (X != NULL);
+             if (I == NULL || X == NULL) {
+                  free(prop_indicies);
+                  free (I);
+                  free (X);
+                  return BULK_FAIL;  // Assume the nodes are rolled back somehow.
+             }
+
+             for (size_t k = 0; k < num_ids; ++k) I[k] = first_id + k;
+
+             GrB_Matrix m = g->labels[label_id]->grb_matrix;
              GrB_Matrix tmp;
              GrB_Index nr;
              GrB_Info info;
              info = GrB_Matrix_nrows(&nr, m);
              assert (info == GrB_SUCCESS); // Really should roll back the insertion.
-             if (nr < id) {
-                  info = GxB_Matrix_resize (m, nr, nr);
-                  assert (info == GrB_SUCCESS);
-             }
+             assert (nr == first_id + num_ids);
+
              info = GrB_Matrix_new (&tmp, GrB_BOOL, nr, nr);
              assert (info != GrB_SUCCESS);
-             bool *X = rm_malloc (id * sizeof(*X));
-             info = GrB_Matrix_build (tmp, I, I, X, id, GrB_NULL);
+
+             for (size_t k = 0; k < num_ids; ++k) X[k] = true;
+             info = GrB_Matrix_build (tmp, I, I, X, num_ids, GrB_NULL);
              assert (info != GrB_SUCCESS);
-             info = GxB_subassign (m, GrB_NULL, GrB_NULL, tmp, I, id, I, id, GrB_NULL);
+
+             info = GxB_subassign (m, GrB_NULL, GrB_NULL, tmp, I, num_ids, I, num_ids, GrB_NULL);
              assert (info != GrB_SUCCESS);
+
              GrB_free (&tmp);
+             rm_free (X);
+             rm_free (I);
         }
 
-        rm_free (I);
 	free(prop_indicies);
 	return BULK_OK;
 }
@@ -167,6 +190,11 @@ int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc, const
 									size_t data_len) {
 	size_t data_idx = 0;
 
+        /* XXX:
+           first pass is to allocate records and add properties
+           second pass extracts the ids
+           then extend the appropriate matrices
+         */
 	int reltype_id;
 	unsigned int prop_count;
 	// Read property keys from header and update schema
@@ -202,8 +230,9 @@ int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc, const
 	return BULK_OK;
 }
 
-int _BulkInsert_InsertNodes(RedisModuleCtx *ctx, GraphContext *gc, int token_count,
-							RedisModuleString ***argv, int *argc) {
+int _BulkInsert_InsertNodes(RedisModuleCtx *ctx, GraphContext *gc, long long nodes_in_query,
+                            int token_count,
+                            RedisModuleString ***argv, int *argc) {
 	int rc;
 	for(int i = 0; i < token_count; i ++) {
 		size_t len;
@@ -211,7 +240,7 @@ int _BulkInsert_InsertNodes(RedisModuleCtx *ctx, GraphContext *gc, int token_cou
 		const char *data = RedisModule_StringPtrLen(**argv, &len);
 		*argv += 1;
 		*argc -= 1;
-		rc = _BulkInsert_ProcessNodeFile(ctx, gc, data, len);
+		rc = _BulkInsert_ProcessNodeFile(ctx, gc, nodes_in_query, data, len);
 		assert(rc == BULK_OK);
 	}
 	return BULK_OK;
@@ -235,13 +264,13 @@ int _BulkInsert_Insert_Edges(RedisModuleCtx *ctx, GraphContext *gc, int token_co
 int BulkInsert(RedisModuleCtx *ctx, GraphContext *gc, 
                long long nodes_in_query, long long relations_in_query, 
                RedisModuleString **argv, int argc) {
-        int retval;
+        int retval = BULK_FAIL;
 	if(argc < 2) {
 		RedisModule_ReplyWithError(ctx, "Bulk insert format error, failed to parse bulk insert sections.");
 		return BULK_FAIL;
 	}
 
-	initial_node_count = Graph_NodeCount(gc->g);
+	long long initial_node_count = Graph_NodeCount(gc->g);
 	// Disable matrix synchronization for bulk insert operation
         MATRIX_POLICY prev_policy = Graph_GetMatrixPolicy (gc->g);
 	Graph_SetMatrixPolicy(gc->g, RESIZE_TO_CAPACITY);
@@ -265,23 +294,13 @@ int BulkInsert(RedisModuleCtx *ctx, GraphContext *gc,
 	argc -= 2;
 
 	if(node_token_count > 0) {
-             int rc = _BulkInsert_InsertNodes(ctx, gc, node_token_count, &argv, &argc);
-             if(rc != BULK_OK) {
-                  retval = BULK_FAIL;
-             } else if(argc == 0) {
-                  retval = BULK_OK;
-             }
-             goto done;
+             retval = _BulkInsert_InsertNodes(ctx, gc, nodes_in_query, node_token_count, &argv, &argc);
+             if(retval != BULK_OK) goto done;
 	}
 
 	if(relation_token_count > 0) {
-             int rc = _BulkInsert_Insert_Edges(ctx, gc, relation_token_count, &argv, &argc);
-             if(rc != BULK_OK) {
-                  retval = BULK_FAIL;
-             } else if(argc == 0) {
-                  retval = BULK_OK;
-             }
-             goto done;
+             retval = _BulkInsert_Insert_Edges(ctx, gc, relation_token_count, &argv, &argc);
+             if(retval != BULK_OK) goto done;
 	}
 
 	assert(argc == 0);
