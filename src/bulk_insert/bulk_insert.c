@@ -157,7 +157,7 @@ int _BulkInsert_ProcessNodeFile(RedisModuleCtx *ctx, GraphContext *gc,
                   return BULK_FAIL;  // Assume the nodes are rolled back somehow.
              }
 
-             for (size_t k = 0; k < num_ids; ++k) I[k] = first_id + k;
+             for (size_t k = 0; k < num_ids; ++k) I[k] = k;
 
              GrB_Matrix m = g->labels[label_id]->grb_matrix;
              GrB_Matrix tmp;
@@ -174,6 +174,8 @@ int _BulkInsert_ProcessNodeFile(RedisModuleCtx *ctx, GraphContext *gc,
              info = GrB_Matrix_build (tmp, I, I, X, num_ids, GrB_NULL);
              assert (info != GrB_SUCCESS);
 
+             // Adjust to the first_id offset into m.
+             for (size_t k = 0; k < num_ids; ++k) I[k] += first_id;
              info = GxB_subassign (m, GrB_NULL, GrB_NULL, tmp, I, num_ids, I, num_ids, GrB_NULL);
              assert (info != GrB_SUCCESS);
 
