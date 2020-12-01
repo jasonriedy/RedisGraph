@@ -94,7 +94,6 @@ static inline SIValue _BulkInsert_ReadProperty(const char *data, size_t *data_id
 }
 
 int _BulkInsert_ProcessNodeFile(RedisModuleCtx *ctx, GraphContext *gc, 
-                                long long nodes_in_query,
                                 const char *data,
                                 size_t data_len) {
 	size_t data_idx = 0;
@@ -191,14 +190,15 @@ int _BulkInsert_ProcessNodeFile(RedisModuleCtx *ctx, GraphContext *gc,
 int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc, const size_t num_orig_nodes,
                                     GrB_Index *I, GrB_Index *J,
                                     const char *data, size_t data_len) {
-	size_t data_idx = 0;
+     if (!data_len) return BULK_OK; // Paranoia check.
+     size_t data_idx = 0;
 
         /*
           There is a single relation_id for the batch.  Assume unique across all batches.
 
-          The matrices already have been resized.
+          The matrices already have been resized.  Unless there's a new relation?  Where is that handled?
 
-          Assume the new region is empty for the relation's matrices.  There may be multi-edges here.
+          Assume the new region is empty for the relation's matrices.  There may be multi-edges here.  Need to sort and kinda uniq.
 
           Not necessarily true for the adjacency matrices.  Those must be built and eWideAdd-ed.  Or just OR-in the relation matrix built here.
          */
@@ -217,17 +217,76 @@ int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc, const
 	unsigned int prop_count;
 	// Read property keys from header and update schema
 	Attribute_ID *prop_indicies = _BulkInsert_ReadHeader(gc, SCHEMA_EDGE, data, &data_idx, &reltype_id,
-														 &prop_count);
+                                                             &prop_count);
 	NodeID src;
 	NodeID dest;
         size_t num_ids = 0;
         size_t max_node_id = 0;
 
+        size_t relations_in_chunk = 0;
+
+        // The first pass counts and reads all the indices.
 	while(data_idx < data_len) {
-		Edge e;
+             I[relations_in_chunk] = *(NodeID *)&data[data_idx];
+             data_idx += sizeof(NodeID);
+             J[relations_in_chunk] = *(NodeID *)&data[data_idx];
+             data_idx += sizeof(NodeID);
+             ++relations_in_chunk;
+
+             // Must parse the variable-length properties to move data_idx forward.
+             for(unsigned int i = 0; i < prop_count; i ++)
+                  _BulkInsert_ReadProperty(data, &data_idx);
+        }
+
+        // Pre-allocate the edge records.
+        EdgeId first_id;
+        for (size_t k = 0; k < relations_in_chunk; ++k) {
+             EdgeId id;
+             Entity *en = DataBlock_AllocateItem(g->edges, &id);
+             en->prop_count = 0;
+             en->properties = NULL;
+             if (k == 0) first_id = id;
+        }
+
+        // Now add properties.
+        if (prop_count) {
+             SIValue *tmp_val = rm_malloc (prop_count * sizeof(*tmp_val));
+             AttributeID *tmp_id = rm_malloc (prop_count * sizeof(*tmp_id));
+             data_idx = 0;
+             for (size_t k = 0; k < relations_in_chunk; ++k) {
+                  size_t nprop = 0;
+                  data_idx += 16; // Skip vertices;
+                  for(unsigned int i = 0; i < prop_count; i ++) {
+                       tmp_val[nprop] = _BulkInsert_ReadProperty(data, &data_idx);
+                       // Cypher does not support NULL as a property value.
+                       // If we encounter one here, simply skip it.
+                       if(SI_TYPE(value) == T_NULL) continue;
+                       tmp_id[nprop] = prop_indices[i];
+                       ++nprop;
+                  }
+                  if (nprop) {
+                       EntityProperty *prop = rm_malloc (nprop * sizeof(*prop));
+                       for (size_t prop_idx = 0; prop_idx < nprop; ++prop_idx) {
+                            prop[prop_idx].id = id;
+                            prop[prop_idx].value = SI_CloneValue(tmp_val[prop_idx]);
+                            SIValue_Free (tmp_val[prop_idx]);
+                       }
+                       g->edges[first_id + k]->properties = prop;
+                       g->edges[first_id + k]->prop_count = nprop;
+                  }
+             }
+        }
+
+        // Create and union in the adjacency matrices.
+
+        XXX not done yet
+
+#if 0
+        EdgeId id;
+
+             Edge e;
 		// Next 8 bytes are source ID
 		src = *(NodeID *)&data[data_idx];
-		data_idx += sizeof(NodeID);
 		// Next 8 bytes are destination ID
 		dest = *(NodeID *)&data[data_idx];
 		data_idx += sizeof(NodeID);
@@ -261,9 +320,10 @@ int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc, const
 done_with_relations:
 	free(prop_indicies);
 	return BULK_OK;
+#endif
 }
 
-int _BulkInsert_InsertNodes(RedisModuleCtx *ctx, GraphContext *gc, long long nodes_in_query,
+int _BulkInsert_InsertNodes(RedisModuleCtx *ctx, GraphContext *gc,
                             int token_count,
                             RedisModuleString ***argv, int *argc) {
 	int rc;
@@ -273,13 +333,13 @@ int _BulkInsert_InsertNodes(RedisModuleCtx *ctx, GraphContext *gc, long long nod
 		const char *data = RedisModule_StringPtrLen(**argv, &len);
 		*argv += 1;
 		*argc -= 1;
-		rc = _BulkInsert_ProcessNodeFile(ctx, gc, nodes_in_query, data, len);
+		rc = _BulkInsert_ProcessNodeFile(ctx, gc, data, len);
 		assert(rc == BULK_OK);
 	}
 	return BULK_OK;
 }
 
-int _BulkInsert_Insert_Edges(RedisModuleCtx *ctx, GraphContext *gc, const size_t num_orig_nodes,
+int _BulkInsert_Insert_Edges(RedisModuleCtx *ctx, GraphContext *gc,
                              GrB_Index *I, GrB_Index *J, 
                              int token_count, RedisModuleString ***argv, int *argc) {
 	int rc;
@@ -289,7 +349,7 @@ int _BulkInsert_Insert_Edges(RedisModuleCtx *ctx, GraphContext *gc, const size_t
 		const char *data = RedisModule_StringPtrLen(**argv, &len);
 		*argv += 1;
 		*argc -= 1;
-		rc = _BulkInsert_ProcessRelationFile(ctx, gc, num_orig_nodes, I, J, data, len);
+		rc = _BulkInsert_ProcessRelationFile(ctx, gc, I, J, data, len);
 		assert(rc == BULK_OK);
 	}
 	return BULK_OK;
@@ -325,20 +385,21 @@ int BulkInsert(RedisModuleCtx *ctx, GraphContext *gc,
 	}
 	argc -= 2;
 
-        size_t num_orig_nodes = gc->g->nodes->itemCount;
+        size_t num_orig_nodes = Graph_NodeCount(gc->g);
 	if(node_token_count > 0) {
-             long long initial_node_count = Graph_NodeCount(gc->g);
              // Allocate or extend datablocks and matrices to accommodate all incoming entities
-             Graph_AllocateNodes(gc->g, nodes_in_query + initial_node_count);
+             Graph_AllocateNodes(gc->g, nodes_in_query + num_orig_nodes);
              retval = _BulkInsert_InsertNodes(ctx, gc, nodes_in_query, node_token_count, &argv, &argc);
              if(retval != BULK_OK) goto done;
 	}
 
 	if(relation_token_count > 0) {
+             // No simple way to query the number of edges...
              DataBlock_AccommodateAdditional (gc->g->edges, relations_in_query);
+             // Overkill.
              I = rm_malloc (relations_in_query * sizeof (*I));
              J = rm_malloc (relations_in_query * sizeof (*J));
-             retval = _BulkInsert_Insert_Edges(ctx, gc, num_orig_nodes, I, J, relation_token_count, &argv, &argc);
+             retval = _BulkInsert_Insert_Edges(ctx, gc, I, J, relation_token_count, &argv, &argc);
              if(retval != BULK_OK) goto done;
 	}
 
