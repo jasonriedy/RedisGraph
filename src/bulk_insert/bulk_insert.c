@@ -142,7 +142,8 @@ int _BulkInsert_ProcessNodeFile(RedisModuleCtx *ctx, GraphContext *gc,
                   // Cypher does not support NULL as a property value.
                   // If we encounter one here, simply skip it.
                   if(SI_TYPE(value) == T_NULL) continue;
-                  GraphEntity_AddProperty((GraphEntity *)en, prop_indicies[i], value);
+                  Node n = { .entity = en, .id = id};
+                  GraphEntity_AddProperty((GraphEntity *)&n, prop_indicies[i], value);
              }
         }
 
@@ -158,27 +159,30 @@ int _BulkInsert_ProcessNodeFile(RedisModuleCtx *ctx, GraphContext *gc,
                   return BULK_FAIL;  // Assume the nodes are rolled back somehow.
              }
 
-             for (size_t k = 0; k < num_ids; ++k) I[k] = k;
+             for (size_t k = 0; k < num_ids; ++k) I[k] = first_id + k;
 
-             GrB_Matrix m = g->labels[label_id]->grb_matrix;
+             GrB_Matrix m = Graph_GetLabelMatrix(g, label_id);
              GrB_Matrix tmp;
              GrB_Index nr;
              GrB_Info info;
-             info = GrB_Matrix_nrows(&nr, m);
+             info = GrB_Matrix_nrows (&nr, m);
              assert (info == GrB_SUCCESS); // Really should roll back the insertion.
-             assert (nr == first_id + num_ids);
+             if (nr < first_id + num_ids) {
+                  nr = first_id + num_ids;
+                  GxB_Matrix_resize (m, nr, nr);
+             }
 
-             info = GrB_Matrix_new (&tmp, GrB_BOOL, nr, nr);
-             assert (info != GrB_SUCCESS);
+             info = GrB_Matrix_new (&tmp, GrB_BOOL, num_ids, num_ids);
+             assert (info == GrB_SUCCESS);
 
              for (size_t k = 0; k < num_ids; ++k) X[k] = true;
-             info = GrB_Matrix_build (tmp, I, I, X, num_ids, GrB_NULL);
-             assert (info != GrB_SUCCESS);
+             info = GrB_Matrix_build (tmp, I, I, X, num_ids, GxB_PAIR_BOOL);
+             assert (info == GrB_SUCCESS);
 
              // Adjust to the first_id offset into m.
              for (size_t k = 0; k < num_ids; ++k) I[k] += first_id;
-             info = GxB_subassign (m, GrB_NULL, GrB_NULL, tmp, I, num_ids, I, num_ids, GrB_NULL);
-             assert (info != GrB_SUCCESS);
+             info = GrB_assign (m, GrB_NULL, GrB_NULL, tmp, I, num_ids, I, num_ids, GrB_NULL);
+             assert (info == GrB_SUCCESS);
 
              GrB_free (&tmp);
              rm_free (X);
@@ -189,23 +193,33 @@ int _BulkInsert_ProcessNodeFile(RedisModuleCtx *ctx, GraphContext *gc,
 	return BULK_OK;
 }
 
-// Copied from src/graph/graph.c
+// Modified from src/graph/graph.c
 static void add_relation_id (EdgeID* z_out, EdgeID x_in, EdgeID y_newid)
 {
 	EdgeID *ids;
 	/* Single edge ID,
 	 * switching from single edge ID to multiple IDs. */
-	if(SINGLE_EDGE(x_in)) {
+	if (SINGLE_EDGE(x_in) && SINGLE_EDGE(y_newid)) {
 		ids = array_new(EdgeID, 2);
 		ids = array_append(ids, SINGLE_EDGE_ID(x_in));
 		ids = array_append(ids, SINGLE_EDGE_ID(y_newid));
 		// TODO: Make sure MSB of ids isn't on.
 		*z_out = (EdgeID)ids;
-	} else {
+	} else if ((!(SINGLE_EDGE(x_in)) && SINGLE_EDGE(y_newid))) {
 		// Multiple edges, adding another edge.
 		ids = (EdgeID *)(x_in);
 		ids = array_append(ids, SINGLE_EDGE_ID(y_newid));
 		*z_out = (EdgeID)ids;
+	} else if ((SINGLE_EDGE(x_in) && !(SINGLE_EDGE(y_newid)))) {
+		// Multiple edges, adding another edge.
+		ids = (EdgeID *)(y_newid);
+		ids = array_append(ids, SINGLE_EDGE_ID(x_in));
+		*z_out = (EdgeID)ids;
+	} else {
+             ids = (EdgeID*)x_in;
+             array_ensure_append (ids, (EdgeID*)y_newid, array_len((EdgeID*)y_newid), EdgeID);
+             *z_out = (EdgeID)ids;
+             // y_newid should be freed.
 	}
 }
 
@@ -285,20 +299,24 @@ int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc,
 
         /* Create and union in the adjacency matrices.  Matrices
            already have been resized.  Now build for the full size and eWiseAdd. */
-	const GrB_Index dims = Graph_RequiredMatrixDim(g);
+	//const GrB_Index dims = Graph_RequiredMatrixDim(g);
         GrB_Matrix addl_adj;
+        GrB_Index nrows;
 
         {
              GrB_Matrix adj = Graph_GetAdjacencyMatrix (g);
              GrB_Matrix tadj = Graph_GetTransposedAdjacencyMatrix (g);
              GrB_Info info;
 
-             bool *X = rm_malloc (dims * sizeof (*X));
+             info = GrB_Matrix_nrows (&nrows, adj);
+             assert (info == GrB_SUCCESS);
+
+             bool *X = rm_malloc (relations_in_chunk * sizeof (*X));
              assert (X != NULL);
-             for (GrB_Index k = 0; k < dims; ++k) X[k] = true;
+             for (GrB_Index k = 0; k < relations_in_chunk; ++k) X[k] = true;
         
-             info = GrB_Matrix_new (&addl_adj, GrB_BOOL, dims, dims);
-             info = GrB_Matrix_build (addl_adj, I, J, X, relations_in_chunk, GrB_NULL);
+             info = GrB_Matrix_new (&addl_adj, GrB_BOOL, nrows, nrows);
+             info = GrB_Matrix_build (addl_adj, I, J, X, relations_in_chunk, GxB_PAIR_BOOL);
              assert (info == GrB_SUCCESS);
 
              info = GrB_eWiseAdd (adj, GrB_NULL, GrB_NULL, GrB_LOR, adj, addl_adj, GrB_NULL);
@@ -327,7 +345,7 @@ int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc,
              /* Build a hash table of the current edges -> [edge_id]. */
              rax *rt = raxNew();
              EdgeID *all_ids = rm_malloc (relations_in_chunk * sizeof (*all_ids));
-             for (size_t k = 0; k < relations_in_chunk; ++k) all_ids[k] = first_id + k;
+             for (size_t k = 0; k < relations_in_chunk; ++k) all_ids[k] = SET_MSB(first_id + k);
              
              for (size_t k = 0; k < relations_in_chunk; ++k) {
                   int lookup;
@@ -338,6 +356,7 @@ int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc,
                   lookup = raxTryInsert (rt, (unsigned char*)IJ, sizeof(IJ), &all_ids[k], (void**)&old_id_ptr);
                   if (lookup == 0) {
                        add_relation_id (old_id_ptr, *old_id_ptr, cur_id);
+                       if (!(SINGLE_EDGE(cur_id))) array_free ((EdgeID*)cur_id);
                        all_ids[k] = -1; // Mark as a duplicate.
                   }
              }
@@ -348,12 +367,15 @@ int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc,
              GrB_Matrix relmat_slice;
              GrB_Info info;
 
-             info = GxB_Matrix_resize (relmat, dims, dims);
+             info = GxB_Matrix_resize (relmat, nrows, nrows);
              assert (info == GrB_SUCCESS);
-             info = GrB_Matrix_new (&relmat_slice, GrB_UINT64, dims, dims);
+             info = GrB_Matrix_new (&relmat_slice, GrB_UINT64, nrows, nrows);
              assert (info == GrB_SUCCESS);
-             info = GrB_Matrix_extract (relmat_slice, addl_adj, GrB_NULL, relmat, 
-                                        GrB_ALL, dims, GrB_ALL, dims, GrB_NULL);
+             info = GrB_Matrix_extract (relmat_slice, addl_adj, GrB_NULL, relmat,
+                                        GrB_ALL, nrows, GrB_ALL, nrows, GrB_NULL);
+             // Possible alternative:
+             /* info = GrB_Matrix_eWiseMult (relmat_slice, GrB_NULL, GrB_NULL, GrB_SECOND_UINT64,  */
+             /*                              addl_adj, relmat, GrB_NULL); */
              assert (info == GrB_SUCCESS);
 
              GrB_Index old_relmat_nvals;
@@ -382,6 +404,7 @@ int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc,
                        new_id_ptr = raxFind (rt, (unsigned char*)IJ, sizeof(IJ));
                        assert (new_id_ptr != raxNotFound); // Extracted through the IJ mask.
                        add_relation_id (new_id_ptr, *new_id_ptr, old_id);
+                       if (!(SINGLE_EDGE(old_id))) array_free ((EdgeID*)old_id);
                   }
                   rm_free (old_X);
                   rm_free (old_I);
@@ -407,7 +430,7 @@ int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc,
              }
              assert (new_nrels > 0); // Utter paranoia.
 
-             info = GrB_Matrix_build (relmat_slice, I, J, all_ids, new_nrels, GrB_NULL);
+             info = GrB_Matrix_build (relmat_slice, I, J, all_ids, new_nrels, GxB_ANY_UINT64);
              assert (info == GrB_SUCCESS);
 
              // At last, replace the entries.  These could be GrB_assign through an addl_adj mask.

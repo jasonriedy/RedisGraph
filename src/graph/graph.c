@@ -382,6 +382,12 @@ void Graph_AllocateNodes(Graph *g, size_t n) {
         info = GxB_Matrix_resize (tadj, required_dim, required_dim);
         assert (info == GrB_SUCCESS);
 
+	for(int i = 0; i < array_len(g->labels); i++) {
+             GrB_Matrix M = Graph_GetLabelMatrix(g, i);
+             GrB_Info info = GxB_Matrix_resize (M, required_dim, required_dim);
+             assert (info == GrB_SUCCESS);
+	}
+
         for (int r = 0; r < num_relations; ++r) {
              GrB_Matrix relationMat = Graph_GetRelationMatrix(g, r);
              info = GxB_Matrix_resize (relationMat, required_dim, required_dim);
