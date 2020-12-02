@@ -1,6 +1,9 @@
 # find the OS
 uname_S := $(shell sh -c 'uname -s 2>/dev/null || echo not')
 
+# For easier site-local customizations
+-include make.inc
+
 # Paths to deps.
 RAX_DIR = ../deps/rax
 XXHASH_DIR = ../deps/xxHash
