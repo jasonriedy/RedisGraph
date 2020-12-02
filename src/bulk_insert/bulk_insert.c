@@ -5,6 +5,8 @@
 */
 
 #include "bulk_insert.h"
+#include "../config.h"
+#include "../util/arr.h"
 #include "../schema/schema.h"
 #include "../util/rmalloc.h"
 #include "../util/datablock/datablock.h"
@@ -187,32 +189,33 @@ int _BulkInsert_ProcessNodeFile(RedisModuleCtx *ctx, GraphContext *gc,
 	return BULK_OK;
 }
 
-int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc, const size_t num_orig_nodes,
+// Copied from src/graph/graph.c
+static void add_relation_id (EdgeID* z_out, EdgeID x_in, EdgeID y_newid)
+{
+	EdgeID *ids;
+	/* Single edge ID,
+	 * switching from single edge ID to multiple IDs. */
+	if(SINGLE_EDGE(x_in)) {
+		ids = array_new(EdgeID, 2);
+		ids = array_append(ids, SINGLE_EDGE_ID(x_in));
+		ids = array_append(ids, SINGLE_EDGE_ID(y_newid));
+		// TODO: Make sure MSB of ids isn't on.
+		*z_out = (EdgeID)ids;
+	} else {
+		// Multiple edges, adding another edge.
+		ids = (EdgeID *)(x_in);
+		ids = array_append(ids, SINGLE_EDGE_ID(y_newid));
+		*z_out = (EdgeID)ids;
+	}
+}
+
+int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc,
                                     GrB_Index *I, GrB_Index *J,
                                     const char *data, size_t data_len) {
      if (!data_len) return BULK_OK; // Paranoia check.
      size_t data_idx = 0;
 
-        /*
-          There is a single relation_id for the batch.  Assume unique across all batches.
-
-          The matrices already have been resized.  Unless there's a new relation?  Where is that handled?
-
-          Assume the new region is empty for the relation's matrices.  There may be multi-edges here.  Need to sort and kinda uniq.
-
-          Not necessarily true for the adjacency matrices.  Those must be built and eWideAdd-ed.  Or just OR-in the relation matrix built here.
-         */
-
-        /* XXX:
-           first pass is to allocate records and add properties
-           second pass extracts the ids
-           then extend the appropriate matrices
-
-           accumulate the IJ
-           extract what exists for the reltype_id
-           update/allocate entries in that subgraph
-           replace
-         */
+        Graph *g = gc->g;
 	int reltype_id;
 	unsigned int prop_count;
 	// Read property keys from header and update schema
@@ -239,19 +242,18 @@ int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc, const
         }
 
         // Pre-allocate the edge records.
-        EdgeId first_id;
+        const EdgeID first_id = g->edges->itemCount;
         for (size_t k = 0; k < relations_in_chunk; ++k) {
-             EdgeId id;
+             EdgeID id;
              Entity *en = DataBlock_AllocateItem(g->edges, &id);
              en->prop_count = 0;
              en->properties = NULL;
-             if (k == 0) first_id = id;
         }
 
         // Now add properties.
         if (prop_count) {
              SIValue *tmp_val = rm_malloc (prop_count * sizeof(*tmp_val));
-             AttributeID *tmp_id = rm_malloc (prop_count * sizeof(*tmp_id));
+             Attribute_ID *tmp_id = rm_malloc (prop_count * sizeof(*tmp_id));
              data_idx = 0;
              for (size_t k = 0; k < relations_in_chunk; ++k) {
                   size_t nprop = 0;
@@ -260,67 +262,166 @@ int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc, const
                        tmp_val[nprop] = _BulkInsert_ReadProperty(data, &data_idx);
                        // Cypher does not support NULL as a property value.
                        // If we encounter one here, simply skip it.
-                       if(SI_TYPE(value) == T_NULL) continue;
-                       tmp_id[nprop] = prop_indices[i];
+                       if(SI_TYPE(tmp_val[nprop]) == T_NULL) continue;
+                       tmp_id[nprop] = prop_indicies[i];
                        ++nprop;
                   }
                   if (nprop) {
                        EntityProperty *prop = rm_malloc (nprop * sizeof(*prop));
                        for (size_t prop_idx = 0; prop_idx < nprop; ++prop_idx) {
-                            prop[prop_idx].id = id;
+                            prop[prop_idx].id = prop_idx;
                             prop[prop_idx].value = SI_CloneValue(tmp_val[prop_idx]);
                             SIValue_Free (tmp_val[prop_idx]);
                        }
-                       g->edges[first_id + k]->properties = prop;
-                       g->edges[first_id + k]->prop_count = nprop;
+                       ((Entity*)DataBlock_GetItem(g->edges, first_id+k))->properties = prop;
+                       ((Entity*)DataBlock_GetItem(g->edges, first_id+k))->prop_count = nprop;
                   }
              }
+             rm_free (tmp_id);
+             rm_free (tmp_val);
+        }
+        free (prop_indicies);
+        prop_indicies = NULL;
+
+        /* Create and union in the adjacency matrices.  Matrices
+           already have been resized.  Now build for the full size and eWiseAdd. */
+	const GrB_Index dims = Graph_RequiredMatrixDim(g);
+        GrB_Matrix addl_adj;
+
+        {
+             GrB_Matrix adj = Graph_GetAdjacencyMatrix (g);
+             GrB_Matrix tadj = Graph_GetTransposedAdjacencyMatrix (g);
+             GrB_Info info;
+
+             bool *X = rm_malloc (dims * sizeof (*X));
+             assert (X != NULL);
+             for (GrB_Index k = 0; k < dims; ++k) X[k] = true;
+        
+             info = GrB_Matrix_new (&addl_adj, GrB_BOOL, dims, dims);
+             info = GrB_Matrix_build (addl_adj, I, J, X, relations_in_chunk, GrB_NULL);
+             assert (info == GrB_SUCCESS);
+
+             info = GrB_eWiseAdd (adj, GrB_NULL, GrB_NULL, GrB_LOR, adj, addl_adj, GrB_NULL);
+             assert (info == GrB_SUCCESS);
+             info = GrB_eWiseAdd (tadj, GrB_NULL, GrB_NULL, GrB_LOR, tadj, addl_adj, GrB_DESC_T1);
+             assert (info == GrB_SUCCESS);
+
+             rm_free (X);
         }
 
-        // Create and union in the adjacency matrices.
+        // Find duplicate edges for the relation matrix, allocated via the header reader
+        /* Note: If a GraphBLAS implementation library properly
+          supports the dup GrB_BinaryOp parameter in GrB_Matrix_build,
+          *AND* if the GraphBLAS routines can manipulate both the host
+          memory and the GraphBLAS memory, that operation could extend
+          the id arrays itself.  Managing memory out-of-band that way
+          is a bit tricky if the build routine is parallel.  That
+          operation also would replace extracting existing relations
+          and re-adding them. 
 
-        XXX not done yet
+          The current implementation does not assume that the host and
+          GraphBLAS can manage each others' memory, e.g. GraphBLAS is
+          on an accelerator. */
 
-#if 0
-        EdgeId id;
+        {
+             /* Build a hash table of the current edges -> [edge_id]. */
+             rax *rt = raxNew();
+             EdgeID *all_ids = rm_malloc (relations_in_chunk * sizeof (*all_ids));
+             for (size_t k = 0; k < relations_in_chunk; ++k) all_ids[k] = first_id + k;
+             
+             for (size_t k = 0; k < relations_in_chunk; ++k) {
+                  int lookup;
+                  EdgeID cur_id = all_ids[k];
+                  EdgeID *old_id_ptr;
+                  GrB_Index IJ[2] = { I[k], J[k] };
 
-             Edge e;
-		// Next 8 bytes are source ID
-		src = *(NodeID *)&data[data_idx];
-		// Next 8 bytes are destination ID
-		dest = *(NodeID *)&data[data_idx];
-		data_idx += sizeof(NodeID);
+                  lookup = raxTryInsert (rt, (unsigned char*)IJ, sizeof(IJ), &all_ids[k], (void**)&old_id_ptr);
+                  if (lookup == 0) {
+                       add_relation_id (old_id_ptr, *old_id_ptr, cur_id);
+                       all_ids[k] = -1; // Mark as a duplicate.
+                  }
+             }
+             
+             /* Get the existing relation matrix and ensure it's the correct
+                size.  The latter may be redundant. */
+             GrB_Matrix relmat = Graph_GetRelationMatrix (g, reltype_id);
+             GrB_Matrix relmat_slice;
+             GrB_Info info;
 
-                // Allocate the edge record, assuming src and dest are unique for this reltype_id
+             info = GxB_Matrix_resize (relmat, dims, dims);
+             assert (info == GrB_SUCCESS);
+             info = GrB_Matrix_new (&relmat_slice, GrB_UINT64, dims, dims);
+             assert (info == GrB_SUCCESS);
+             info = GrB_Matrix_extract (relmat_slice, addl_adj, GrB_NULL, relmat, 
+                                        GrB_ALL, dims, GrB_ALL, dims, GrB_NULL);
+             assert (info == GrB_SUCCESS);
 
+             GrB_Index old_relmat_nvals;
+             info = GrB_Matrix_nvals (&old_relmat_nvals, relmat_slice);
+             assert (info == GrB_SUCCESS);
+             if (old_relmat_nvals) {
+                  // Extract and insert into the hash table.
+                  GrB_Index *old_I;
+                  GrB_Index *old_J;
+                  uint64_t *old_X;
+                  GrB_Index actually_extracted;
+                  
+                  old_I = rm_malloc (2 * old_relmat_nvals * sizeof (*old_I));
+                  old_J = &old_I[old_relmat_nvals];
+                  old_X = rm_malloc (old_relmat_nvals * sizeof (*old_X));
+                  info = GrB_Matrix_extractTuples (old_I, old_J, old_X, &actually_extracted, relmat_slice);
+                  assert (info == GrB_SUCCESS);
+                  assert (actually_extracted == old_relmat_nvals);
 
-                // Process and add relation properties to this edge's record
-		Graph_ConnectNodes(gc->g, src, dest, reltype_id, &e);
+                  for (size_t k = 0; k < old_relmat_nvals; ++k) {
+                       int lookup;
+                       EdgeID old_id = old_X[k];
+                       EdgeID *new_id_ptr;
+                       GrB_Index IJ[2] = { old_I[k], old_J[k] };
 
-		if(prop_count == 0) continue;
+                       new_id_ptr = raxFind (rt, (unsigned char*)IJ, sizeof(IJ));
+                       assert (new_id_ptr != raxNotFound); // Extracted through the IJ mask.
+                       add_relation_id (new_id_ptr, *new_id_ptr, old_id);
+                  }
+                  rm_free (old_X);
+                  rm_free (old_I);
+             }
+             // No longer need the hash table, and it will be incorrect shortly.
+             raxFree (rt);
+             rt = NULL;
 
-		// Process and add relation properties
-		for(unsigned int i = 0; i < prop_count; i ++) {
-			SIValue value = _BulkInsert_ReadProperty(data, &data_idx);
-			// Cypher does not support NULL as a property value.
-			// If we encounter one here, simply skip it.
-			if(SI_TYPE(value) == T_NULL) continue;
-			GraphEntity_AddProperty((GraphEntity *)&e, prop_indicies[i], value);
-		}
-	}
+             // Build the matrix to be inserted.
+             info = GrB_Matrix_clear (relmat_slice);
+             assert (info == GrB_SUCCESS);
 
-        /*
-          Ensure the relation matrices are large enough (and sanity check the adj matrices).
-          Build a mask.
-          Fetch the slice.
-          For all in the mask, add to their data
-          For all not in the mask, allocate their data
-         */
+             // Compress I, J, all_ids
+             size_t first = 0, new_nrels = 0;
+             assert (all_ids[0] != -1); // Don't feel like dealing with it.
+             while (++first != relations_in_chunk) {
+                  if (all_ids[first] == -1) {
+                       I[new_nrels] = I[first];
+                       J[new_nrels] = J[first];
+                       all_ids[new_nrels] = all_ids[first];
+                       ++new_nrels;
+                  }
+             }
+             assert (new_nrels > 0); // Utter paranoia.
 
-done_with_relations:
-	free(prop_indicies);
-	return BULK_OK;
-#endif
+             info = GrB_Matrix_build (relmat_slice, I, J, all_ids, new_nrels, GrB_NULL);
+             assert (info == GrB_SUCCESS);
+
+             // At last, replace the entries.  These could be GrB_assign through an addl_adj mask.
+             info = GrB_eWiseAdd (relmat, GrB_NULL, GrB_NULL, GrB_SECOND_UINT64, relmat, relmat_slice, GrB_NULL);
+             if (Config_MaintainTranspose()) { // XXX: Creation, so assume symmetric...
+                  GrB_Matrix t_relmat = Graph_GetTransposedRelationMatrix (g, reltype_id);
+                  info = GrB_eWiseAdd (relmat, GrB_NULL, GrB_NULL, GrB_SECOND_UINT64, relmat, relmat_slice, GrB_DESC_T1);
+             }
+
+             GrB_free (&relmat_slice);
+             GrB_free (&addl_adj);
+             rm_free (all_ids);
+        }
+        return BULK_OK;
 }
 
 int _BulkInsert_InsertNodes(RedisModuleCtx *ctx, GraphContext *gc,
@@ -389,7 +490,7 @@ int BulkInsert(RedisModuleCtx *ctx, GraphContext *gc,
 	if(node_token_count > 0) {
              // Allocate or extend datablocks and matrices to accommodate all incoming entities
              Graph_AllocateNodes(gc->g, nodes_in_query + num_orig_nodes);
-             retval = _BulkInsert_InsertNodes(ctx, gc, nodes_in_query, node_token_count, &argv, &argc);
+             retval = _BulkInsert_InsertNodes(ctx, gc, node_token_count, &argv, &argc);
              if(retval != BULK_OK) goto done;
 	}
 
