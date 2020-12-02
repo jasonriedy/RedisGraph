@@ -9,6 +9,8 @@
 #include "../algebraic_expression.h"
 #include "lucata_state.h"
 
+#include <sys/time.h>
+
 extern LucataState *g_lucataState;
 
 // Forward declarations
@@ -136,6 +138,10 @@ static GrB_Matrix _Eval_Mul(const AlgebraicExpression *exp, GrB_Matrix res) {
 		   AlgebraicExpression_ChildCount(exp) > 1 &&
 		   AlgebraicExpression_OperationCount(exp, AL_EXP_MUL) == 1);
 
+    struct timeval t0, t1;
+    if (g_lucataState && g_lucataState->m_runningKhop) {
+        gettimeofday(&t0, NULL);
+    }
 	GrB_Matrix A;
 	GrB_Matrix B;
 	GrB_Info info;
@@ -217,7 +223,10 @@ static GrB_Matrix _Eval_Mul(const AlgebraicExpression *exp, GrB_Matrix res) {
 	if(desc != GrB_NULL) GrB_free(&desc);
 
     if (g_lucataState && g_lucataState->m_runningKhop) {
-         g_lucataState->m_khopResultsAvailable = true;
+        gettimeofday(&t1, NULL);
+        g_lucataState->m_khopResultsAvailable = true;
+        double elapsedTime = (t1.tv_sec - t0.tv_sec) + (t1.tv_usec - t0.tv_usec) / 1.0e6;
+        printf("ELAPSED TIME IN K-HOP mxm's: %f seconds\n", elapsedTime);
     }
 
 	return res;
