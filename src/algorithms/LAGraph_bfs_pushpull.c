@@ -34,6 +34,13 @@
 #include "LAGraph_bfs_pushpull.h"
 #include "../config.h"
 
+#if defined(_OPENMP)
+#define OMP(x) OMP_(omp x)
+#define OMP_(x) _Pragma(#x)
+#else
+#define OMP(x)
+#endif
+
 //------------------------------------------------------------------------------
 
 // LAGraph_bfs_pushpull: direction-optimized push/pull breadth first search,
@@ -365,7 +372,7 @@
 #define LAGRAPH_FREE_ALL    \
 {                           \
     GrB_free (&v) ;         \
-    GrB_free (&t) ;         \
+    GrB_free (&iota) ;      \
     GrB_free (&q) ;         \
     GrB_free (&pi) ;        \
 }
@@ -400,7 +407,7 @@ GrB_Info LAGraph_bfs_pushpull   // push-pull BFS, or push-only if AT = NULL
 	GrB_Info info ;
 	GrB_Vector q = NULL ;           // nodes visited at each level
 	GrB_Vector v = NULL ;           // result vector
-	GrB_Vector t = NULL ;           // temporary vector
+	GrB_Vector iota = NULL ;           // 1:n
 	GrB_Vector pi = NULL ;          // parent vector
 
 	if(v_output == NULL || (A == NULL && AT == NULL)) {
@@ -462,6 +469,23 @@ GrB_Info LAGraph_bfs_pushpull   // push-pull BFS, or push-only if AT = NULL
 		// create an integer vector q, and set q(source) to source+1
 		GrB_Vector_new(&q, int_type, n) ;
 		GrB_Vector_setElement(q, source + 1, source) ;
+
+                GrB_Vector_new(&iota, int_type, n) ;
+                if (n > INT32_MAX) {
+                     int64_t *iota_vals = malloc(n * sizeof(*iota_vals)) ;
+                     OMP(parallel for)
+                          for (int64_t k = 0; k < n; ++k)
+                               iota_vals[k] = k+1 ;
+                     GrB_Vector_build(iota, GrB_ALL, iota_vals, n, GxB_ANY_INT64) ;
+                     free(iota_vals) ;
+                } else {
+                     int32_t *iota_vals = malloc(n * sizeof(*iota_vals)) ;
+                     OMP(parallel for)
+                          for (int32_t k = 0; k < n; ++k)
+                               iota_vals[k] = k+1 ;
+                     GrB_Vector_build(iota, GrB_ALL, iota_vals, n, GxB_ANY_INT32) ;
+                     free(iota_vals) ;
+                }
 
 		if(n > INT32_MAX) {
 			// terminates as soon as it finds any parent; nondeterministic
@@ -585,36 +609,7 @@ GrB_Info LAGraph_bfs_pushpull   // push-pull BFS, or push-only if AT = NULL
 			// replace q with current node numbers
 			//------------------------------------------------------------------
 
-			// TODO this could be a unaryop
-			// q(i) = i+1 for all entries in q.
-
-			GrB_Index *qi ;
-			if(n > INT32_MAX) {
-				int64_t *qx ;
-				GxB_Vector_export(&q, &int_type, &n, &nq, &qi,
-								  (void **)(&qx), NULL) ;
-				int nth = LAGRAPH_MIN(nq / (64 * 1024), nthreads) ;
-				nth = LAGRAPH_MAX(nth, 1) ;
-				#pragma omp parallel for num_threads(nth) schedule(static)
-				for(int64_t k = 0 ; k < nq ; k++) {
-					qx [k] = qi [k] + 1 ;
-				}
-				GxB_Vector_import(&q, int_type, n, nq, &qi,
-								  (void **)(&qx), NULL) ;
-			} else {
-				int32_t *qx ;
-				GxB_Vector_export(&q, &int_type, &n, &nq, &qi,
-								  (void **)(&qx), NULL) ;
-				int nth = LAGRAPH_MIN(nq / (64 * 1024), nthreads) ;
-				nth = LAGRAPH_MAX(nth, 1) ;
-				#pragma omp parallel for num_threads(nth) schedule(static)
-				for(int32_t k = 0 ; k < nq ; k++) {
-					qx [k] = qi [k] + 1 ;
-				}
-				GxB_Vector_import(&q, int_type, n, nq, &qi,
-								  (void **)(&qx), NULL) ;
-			}
-
+                        GrB_assign(q, q, NULL, iota, GrB_ALL, n, desc_s) ;
 		} else {
 
 			//------------------------------------------------------------------
