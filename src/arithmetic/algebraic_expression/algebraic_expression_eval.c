@@ -219,32 +219,57 @@ static GrB_Matrix _Eval_Mul(const AlgebraicExpression *exp, GrB_Matrix res) {
 GrB_Matrix _AlgebraicExpression_Eval(const AlgebraicExpression *exp, GrB_Matrix res) {
 	assert(exp);
 
+        const char *exp_type;
+        const char *opexp_type = "none";
+
+        const long long tic = RedisModule_Milliseconds ();
+
 	// Perform operation.
 	switch(exp->type) {
 	case AL_OPERATION:
+                exp_type = "operation";
 		switch(exp->operation.op) {
 		case AL_EXP_MUL:
 			res = _Eval_Mul(exp, res);
+                        opexp_type = "mul";
 			break;
 
 		case AL_EXP_ADD:
 			res = _Eval_Add(exp, res);
+                        opexp_type = "add";
 			break;
 
 		case AL_EXP_TRANSPOSE:
 			res = _Eval_Transpose(exp, res);
+                        opexp_type = "trans";
 			break;
 
 		default:
+                        opexp_type = "unk";
+                        res = GrB_NULL;
 			assert("Unknown algebraic expression operation" && false);
+                        break;
 		}
 		break;
 	case AL_OPERAND:
+                exp_type = "operand";
 		res = exp->operand.matrix;
 		break;
 	default:
+                exp_type = "unk";
+                res = GrB_NULL;
 		assert("Unknown algebraic expression node type" && false);
+                break;
 	}
+
+        const long long toc = RedisModule_Milliseconds ();
+
+        RedisModule_Log (QueryCtx_GetRedisModuleCtx (), 
+                         "notice", "{ \"exp\": \"%s\"; "
+                         "\"opexp\": \"%s\"; "
+                         "\"time\": %ld; }",
+                         exp_type, opexp_type,
+                         (long)(toc - tic));
 
 	return res;
 }
