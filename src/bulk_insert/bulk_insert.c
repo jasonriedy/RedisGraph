@@ -255,6 +255,11 @@ int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc,
                   _BulkInsert_ReadProperty(data, &data_idx);
         }
 
+        if (relations_in_chunk == 0) {
+             free (prop_indicies);
+             return BULK_OK;
+        }
+
         // Pre-allocate the edge records.
         const EdgeID first_id = g->edges->itemCount;
         for (size_t k = 0; k < relations_in_chunk; ++k) {
@@ -420,7 +425,7 @@ int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc,
              // Compress I, J, all_ids
              size_t first = 0, new_nrels = 0;
              assert (all_ids[0] != -1); // Don't feel like dealing with it.
-             while (++first != relations_in_chunk) {
+             while (++first < relations_in_chunk) {
                   if (all_ids[first] == -1) {
                        I[new_nrels] = I[first];
                        J[new_nrels] = J[first];
@@ -428,7 +433,12 @@ int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc,
                        ++new_nrels;
                   }
              }
-             assert (new_nrels > 0); // Utter paranoia.
+             //assert (new_nrels > 0); // Utter paranoia.
+             if (new_nrels == 0) {
+                  rm_free (all_ids);
+                  GrB_free (&addl_adj);
+                  return BULK_OK;
+             }
 
              info = GrB_Matrix_build (relmat_slice, I, J, all_ids, new_nrels, GxB_ANY_UINT64);
              assert (info == GrB_SUCCESS);
