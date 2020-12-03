@@ -8,11 +8,6 @@
 #include "shared/print_functions.h"
 #include "../../query_ctx.h"
 
-#include "lucata_extensions.h"
-
-#include "lucata_state.h"
-extern LucataState *g_lucataState;
-
 /* Forward declarations. */
 static OpResult CondTraverseInit(OpBase *opBase);
 static Record CondTraverseConsume(OpBase *opBase);
@@ -133,25 +128,6 @@ static Record CondTraverseConsume(OpBase *opBase) {
 	NodeID dest_id = INVALID_ENTITY_ID;
 
 	while(true) {
-        /*
-           // This has already been done by the GxB_MatrixTupleIter code for row 0, which is the only one we need for the benchmark
-        if (g_lucataState && g_lucataState->m_khopResultsAvailable && !g_lucataState->m_khopResultsObtained) {
-            printf("get results from %p!\n", op->M);
-            GrB_Index N = 0;
-            GrB_Matrix_ncols(&N, op->M);
-            g_lucataState->m_numResults = 0;
-            g_lucataState->m_results = (GrB_Index *)malloc(N * sizeof(GrB_Index));
-            // If N is too big, we can run by steps. Default is [0,N[: get all
-            GxB_Matrix_rows_fetch(&g_lucataState->m_numResults, g_lucataState->m_results, op->M, 0, N);
-            printf("matching nodes (%lu / %lu): [ ", g_lucataState->m_numResults, N);
-            for (GrB_Index i = 0; i < g_lucataState->m_numResults; i++)
-                printf("%lu ", g_lucataState->m_results[i]);
-            printf("]\n");
-            g_lucataState->m_khopResultsObtained = true;
-            g_lucataState->m_iteratorIndex = 0;
-        }
-        */
-
 		if(op->iter) GxB_MatrixTupleIter_next(op->iter, &src_id, &dest_id, &depleted);
 
 		// Managed to get a tuple, break.

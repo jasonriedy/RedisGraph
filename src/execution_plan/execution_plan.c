@@ -26,9 +26,6 @@
 #include <assert.h>
 #include <setjmp.h>
 
-#include "lucata_state.h"
-extern LucataState *g_lucataState;
-
 //----reduce_to_apply.c----//
 /* Reduces a filter operation into an apply operation. */
 void ExecutionPlan_ReduceFilterToApply(ExecutionPlan *plan, OpFilter *filter);
@@ -1058,10 +1055,6 @@ ResultSet *ExecutionPlan_Execute(ExecutionPlan *plan) {
 	Record r = NULL;
 	// Execute the root operation and free the processed Record until the data stream is depleted.
 	while((r = OpBase_Consume(plan->root)) != NULL) ExecutionPlan_ReturnRecord(r->owner, r);
-
-    if (g_lucataState && g_lucataState->m_runningKhop) {
-        g_lucataState->m_runningKhop = false;
-    }
 
 	return QueryCtx_GetResultSet();
 }

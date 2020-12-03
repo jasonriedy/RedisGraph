@@ -9,17 +9,6 @@
 
 #include <GraphBLAS.h>
 
-#include "lucata_state.h"
-extern LucataState *g_lucataState;
-
-#define DEBUG_CALLS 1
-#undef DEBUG_CALLS 
-#ifdef DEBUG_CALLS
-#   define LOG_CALL() printf("Entering... %s\n", __func__);
-#else
-#   define LOG_CALL() ;
-#endif
-
 // Not great, but handy.
 #define IDX_ALL ((uint64_t)-1)
 
@@ -42,7 +31,6 @@ static GrB_Info iter_init (struct GBr_MatrixTupleIter_opaque *gxb_iter, GrB_Matr
 GrB_Info 
 GxB_MatrixTupleIter_free (GxB_MatrixTupleIter *gxb_iter)
 {
-    LOG_CALL();
      if (gxb_iter == NULL) return GrB_NULL_POINTER;
      struct GBr_MatrixTupleIter_opaque *iter = *gxb_iter;
      if (iter == NULL) return GrB_SUCCESS;
@@ -57,7 +45,6 @@ GxB_MatrixTupleIter_free (GxB_MatrixTupleIter *gxb_iter)
 GrB_Info 
 GxB_MatrixTupleIter_new (GxB_MatrixTupleIter *gxb_iter, GrB_Matrix A)
 {
-    LOG_CALL();
      if (gxb_iter == NULL) return GrB_NULL_POINTER;
      
      struct GBr_MatrixTupleIter_opaque *iter;
@@ -75,7 +62,6 @@ GxB_MatrixTupleIter_new (GxB_MatrixTupleIter *gxb_iter, GrB_Matrix A)
 GrB_Info 
 GxB_MatrixTupleIter_reuse (GxB_MatrixTupleIter gxb_iter, GrB_Matrix A)
 {
-    LOG_CALL();
      struct GBr_MatrixTupleIter_opaque *iter = gxb_iter;
      if (iter == NULL) return GrB_NULL_POINTER;
 
@@ -85,7 +71,6 @@ GxB_MatrixTupleIter_reuse (GxB_MatrixTupleIter gxb_iter, GrB_Matrix A)
 GrB_Info 
 GxB_MatrixTupleIter_reset (GxB_MatrixTupleIter gxb_iter)
 {
-    LOG_CALL();
      struct GBr_MatrixTupleIter_opaque *iter = gxb_iter;
      if (iter == NULL) return GrB_NULL_POINTER;
      return GxB_MatrixTupleIter_reuse (gxb_iter, iter->A);
@@ -94,7 +79,6 @@ GxB_MatrixTupleIter_reset (GxB_MatrixTupleIter gxb_iter)
 GrB_Info 
 GxB_MatrixTupleIter_iterate_range (GxB_MatrixTupleIter gxb_iter, GrB_Index startRowIdx, GrB_Index endRowIdx)
 {
-    LOG_CALL();
      struct GBr_MatrixTupleIter_opaque *iter = gxb_iter;
      if (iter == NULL) return GrB_NULL_POINTER;
 
@@ -106,7 +90,6 @@ GxB_MatrixTupleIter_iterate_range (GxB_MatrixTupleIter gxb_iter, GrB_Index start
 GrB_Info 
 GxB_MatrixTupleIter_iterate_row (GxB_MatrixTupleIter iter, GrB_Index rowIdx)
 {
-    LOG_CALL();
      return GxB_MatrixTupleIter_iterate_range (iter, rowIdx, rowIdx);
 }
 
@@ -114,7 +97,6 @@ static GrB_Info
 iter_forward_from (struct GBr_MatrixTupleIter_opaque *iter, GrB_Index begin)
 // Stops at the first non-empty column in [begin, iter->end).
 {
-    LOG_CALL();
      assert (iter != NULL);
      const GrB_Matrix A = iter->A;
      const GrB_Index end = iter->end; 
@@ -127,10 +109,6 @@ iter_forward_from (struct GBr_MatrixTupleIter_opaque *iter, GrB_Index begin)
      assert (iter->offset == iter->v_pattern_len); // Requires both to be zero on initialization / reuse.
 
      if (begin == end) goto info_out;
-
-     // HACK: for seeds based on unique id's, we know that only row 0 has data!
-     if (g_lucataState && g_lucataState->m_runningKhop && g_lucataState->m_khopResultsAvailable && begin > 0)
-            goto info_out;
 
      v_nv = 0;
      do {
@@ -182,7 +160,6 @@ info_out:
 GrB_Info
 iter_init (struct GBr_MatrixTupleIter_opaque *iter, GrB_Matrix A, GrB_Index begin, GrB_Index end)
 {
-    LOG_CALL();
      GrB_Index nr, nc;
      GrB_Info info;
      
@@ -252,7 +229,6 @@ iter_init (struct GBr_MatrixTupleIter_opaque *iter, GrB_Matrix A, GrB_Index begi
 GrB_Info 
 GxB_MatrixTupleIter_next (GxB_MatrixTupleIter gxb_iter, GrB_Index *row, GrB_Index *col, bool *depleted)
 {
-    LOG_CALL();
      /* General logic:
         If finished, set depleted to true and return.
         Retrieve and store the current entry (special case column vectors).

@@ -8,12 +8,6 @@
 #include "../query_ctx.h"
 #include "../execution_plan/execution_plan_clone.h"
 
-#include "lucata_state.h"
-
-#include <pcre.h>
-
-LucataState *g_lucataState = NULL;
-
 static ExecutionType _GetExecutionTypeFromAST(AST *ast) {
 	const cypher_astnode_type_t root_type = cypher_astnode_type(ast->root);
 	if(root_type == CYPHER_AST_QUERY) return EXECUTION_TYPE_QUERY;
@@ -67,50 +61,6 @@ static AST *_ExecutionCtx_ParseAST(const char *query_string,
 }
 
 ExecutionCtx ExecutionCtx_FromQuery(const char *query) {
-    const char *regex = "MATCH \\(s:([^)]+)\\)-\\[\\*([^)]+)\\]->\\(t\\) WHERE s.id=([^)]+) RETURN count\\(t\\)";
-    //printf("%s query: %s[%lu] regex: %s [%lu]\n", __func__, query, strlen(query), regex, strlen(regex));
-    pcre *reCompiled = NULL;
-    const char *pcreErrorStr;
-    int pcreErrorOffset;
-    reCompiled = pcre_compile(regex, 0, &pcreErrorStr, &pcreErrorOffset, NULL);
-    if (reCompiled) {
-//        printf("Succesfully compiled regex into pattern buffer\n");
-    } else {
-        printf("Failed to compile regex into pattern buffer\n");
-    }
-
-    pcre_extra *pcreExtra = pcre_study(reCompiled, 0, &pcreErrorStr);
-    if(pcreErrorStr != NULL) {
-        printf("ERROR: Could not study '%s': %s\n", regex, pcreErrorStr);
-    }
-
-	int subStrVec[30];
-	int pcreExecRet = pcre_exec(reCompiled,
-                            pcreExtra,
-                            query, 
-                            strlen(query),  // length of string
-                            0,                      // Start looking at this point
-                            0,                      // OPTIONS
-                            subStrVec,
-                            30);
-    if (pcreExecRet < 0) {
-  //      printf("NO MATCH FOUND %d\n", pcreExecRet);
-
-    } else {
-        g_lucataState = (LucataState *)malloc(sizeof(LucataState));
-        g_lucataState->m_runningKhop = true;
-        g_lucataState->m_khopResultsAvailable = false;
-        g_lucataState->m_khopResultsObtained = false;
-  //      printf("MATCH FOUND! %d\n", pcreExecRet);
-        // 0 is whole, 1 is graph id, 2 is number of hops, 3 is seed id
-        for(int j=0; j < pcreExecRet; j++) {
-			const char *psubStrMatchStr;
-
-        	pcre_get_substring(query, subStrVec, pcreExecRet, j, &(psubStrMatchStr));
-   //     	printf("Match(%2d/%2d): (%2d,%2d): '%s'\n", j, pcreExecRet-1, subStrVec[j*2], subStrVec[j*2+1], psubStrMatchStr);
-      	}
-    }
-
 	// Have an invalid ctx for errors.
 	ExecutionCtx invalid_ctx = {.ast = NULL, .plan = NULL, .cached = false, .exec_type = EXECUTION_TYPE_INVALID};
 	const char *query_string;

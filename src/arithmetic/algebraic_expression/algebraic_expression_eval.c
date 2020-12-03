@@ -7,9 +7,6 @@
 #include "utils.h"
 #include "../../query_ctx.h"
 #include "../algebraic_expression.h"
-#include "lucata_state.h"
-
-extern LucataState *g_lucataState;
 
 // Forward declarations
 GrB_Matrix _AlgebraicExpression_Eval(const AlgebraicExpression *exp, GrB_Matrix res);
@@ -215,10 +212,6 @@ static GrB_Matrix _Eval_Mul(const AlgebraicExpression *exp, GrB_Matrix res) {
 	}
 
 	if(desc != GrB_NULL) GrB_free(&desc);
-
-    if (g_lucataState && g_lucataState->m_runningKhop) {
-         g_lucataState->m_khopResultsAvailable = true;
-    }
 
 	return res;
 }
