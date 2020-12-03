@@ -4,6 +4,7 @@
 * This file is available under the Redis Labs Source Available License Agreement
 */
 
+#include "../redismodule.h"
 #include "bulk_insert.h"
 #include "../config.h"
 #include "../util/arr.h"
@@ -12,6 +13,8 @@
 #include "../util/datablock/datablock.h"
 #include <errno.h>
 #include <assert.h>
+
+#define TIMING_LOG_LEVEL "notice"
 
 // The first byte of each property in the binary stream
 // is used to indicate the type of the subsequent SIValue
@@ -125,6 +128,8 @@ int _BulkInsert_ProcessNodeFile(RedisModuleCtx *ctx, GraphContext *gc,
         const uint64_t first_id = nodes->itemCount;
         size_t num_ids = 0;
 
+        const long long start_ts = RedisModule_Milliseconds ();
+
         while (data_idx < data_len) {
              // Cheat and inline datablock allocation.
              const uint64_t id = nodes->itemCount++;
@@ -146,6 +151,8 @@ int _BulkInsert_ProcessNodeFile(RedisModuleCtx *ctx, GraphContext *gc,
                   GraphEntity_AddProperty((GraphEntity *)&n, prop_indicies[i], value);
              }
         }
+
+        const long long property_ts = RedisModule_Milliseconds ();
 
         if (label_id != GRAPH_NO_LABEL) {
              GrB_Index *I = rm_malloc (num_ids * sizeof(*I));
@@ -189,6 +196,12 @@ int _BulkInsert_ProcessNodeFile(RedisModuleCtx *ctx, GraphContext *gc,
              rm_free (X);
              rm_free (I);
         }
+
+        const long long label_ts = RedisModule_Milliseconds ();
+
+        RedisModule_Log (ctx, TIMING_LOG_LEVEL, "{ \"kind\": \"Bulk node insertion\"; "
+                         "\"property\": %ld; \"label\": %ld; }", 
+                         (long)(property_ts - start_ts), (long)(label_ts - property_ts));
 
 	free(prop_indicies);
 	return BULK_OK;
@@ -243,6 +256,8 @@ int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc,
 
         size_t relations_in_chunk = 0;
 
+        const long long start_ts = RedisModule_Milliseconds ();
+
         // The first pass counts and reads all the indices.
 	while(data_idx < data_len) {
              I[relations_in_chunk] = *(NodeID *)&data[data_idx];
@@ -261,7 +276,9 @@ int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc,
              return BULK_OK;
         }
 
-        // Pre-allocate the edge records.
+        const long long count_ts = RedisModule_Milliseconds ();
+
+        // Pre-initialize the edge records.
         const EdgeID first_id = g->edges->itemCount;
         for (size_t k = 0; k < relations_in_chunk; ++k) {
              EdgeID id;
@@ -269,6 +286,8 @@ int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc,
              en->prop_count = 0;
              en->properties = NULL;
         }
+
+        const long long preinit_ts = RedisModule_Milliseconds ();
 
         // Now add properties.
         if (prop_count) {
@@ -303,6 +322,8 @@ int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc,
         free (prop_indicies);
         prop_indicies = NULL;
 
+        const long long property_ts = RedisModule_Milliseconds ();
+
         /* Create and union in the adjacency matrices.  Matrices
            already have been resized.  Now build for the full size and eWiseAdd. */
 	//const GrB_Index dims = Graph_RequiredMatrixDim(g);
@@ -332,6 +353,8 @@ int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc,
 
              rm_free (X);
         }
+
+        const long long adj_ts = RedisModule_Milliseconds ();
 
         // Find duplicate edges for the relation matrix, allocated via the header reader
         /* Note: If a GraphBLAS implementation library properly
@@ -455,6 +478,19 @@ int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc,
              GrB_free (&addl_adj);
              rm_free (all_ids);
         }
+
+        const long long relmat_ts = RedisModule_Milliseconds ();
+
+        RedisModule_Log (ctx, TIMING_LOG_LEVEL, "{ \"kind\": \"Bulk relation insertion\"; "
+                         "\"count\": %ld; "
+                         "\"preinit\": %ld; "
+                         "\"property\": %ld; "
+                         "\"adj\": %ld; "
+                         "\"relmat\": %ld; }", 
+                         (long)(count_ts - start_ts), (long)(preinit_ts - count_ts),
+                         (long)(property_ts - preinit_ts), (long)(adj_ts - property_ts),
+                         (long)(relmat_ts - adj_ts));
+
         return BULK_OK;
 }
 
@@ -462,14 +498,19 @@ int _BulkInsert_InsertNodes(RedisModuleCtx *ctx, GraphContext *gc,
                             int token_count,
                             RedisModuleString ***argv, int *argc) {
 	int rc;
+        long long tic, toc;
 	for(int i = 0; i < token_count; i ++) {
-		size_t len;
-		// Retrieve a pointer to the next binary stream and record its length
-		const char *data = RedisModule_StringPtrLen(**argv, &len);
-		*argv += 1;
-		*argc -= 1;
-		rc = _BulkInsert_ProcessNodeFile(ctx, gc, data, len);
-		assert(rc == BULK_OK);
+             tic = RedisModule_Milliseconds ();
+             size_t len;
+             // Retrieve a pointer to the next binary stream and record its length
+             const char *data = RedisModule_StringPtrLen(**argv, &len);
+             *argv += 1;
+             *argc -= 1;
+             rc = _BulkInsert_ProcessNodeFile(ctx, gc, data, len);
+             assert(rc == BULK_OK);
+             toc = RedisModule_Milliseconds ();
+             RedisModule_Log (ctx, TIMING_LOG_LEVEL, "{ \"kind\": \"Bulk node chunk\"; "
+                              "\"token\": %d; \"ms\": %ld; }", i, (long)(toc - tic));
 	}
 	return BULK_OK;
 }
@@ -478,14 +519,19 @@ int _BulkInsert_Insert_Edges(RedisModuleCtx *ctx, GraphContext *gc,
                              GrB_Index *I, GrB_Index *J, 
                              int token_count, RedisModuleString ***argv, int *argc) {
 	int rc;
+        long long tic, toc;
 	for(int i = 0; i < token_count; i ++) {
-		size_t len;
-		// Retrieve a pointer to the next binary stream and record its length
-		const char *data = RedisModule_StringPtrLen(**argv, &len);
-		*argv += 1;
-		*argc -= 1;
-		rc = _BulkInsert_ProcessRelationFile(ctx, gc, I, J, data, len);
-		assert(rc == BULK_OK);
+             tic = RedisModule_Milliseconds ();
+             size_t len;
+             // Retrieve a pointer to the next binary stream and record its length
+             const char *data = RedisModule_StringPtrLen(**argv, &len);
+             *argv += 1;
+             *argc -= 1;
+             rc = _BulkInsert_ProcessRelationFile(ctx, gc, I, J, data, len);
+             assert(rc == BULK_OK);
+             toc = RedisModule_Milliseconds ();
+             RedisModule_Log (ctx, TIMING_LOG_LEVEL, "{ \"kind\": \"Bulk relation chunk\"; "
+                              "\"token\": %d; \"ms\": %ld; }", i, (long)(toc - tic));
 	}
 	return BULK_OK;
 }
