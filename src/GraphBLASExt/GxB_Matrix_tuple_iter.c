@@ -13,7 +13,7 @@
 
 struct GBr_MatrixTupleIter_opaque {
      GrB_Matrix A;
-     GrB_Index nr, nc, n;
+     GrB_Index nr, nc, n, nvals_remaining;
      GrB_Descriptor desc;
 
      GrB_Index begin, end;
@@ -107,7 +107,7 @@ iter_forward_from (struct GBr_MatrixTupleIter_opaque *iter, GrB_Index begin)
 
      ASSERT (iter->offset == iter->v_pattern_len); // Requires both to be zero on initialization / reuse.
 
-     if (begin == end) goto info_out;
+     if (begin == end || iter->nvals_remaining == 0) goto info_out;
 
      v_nv = 0;
      do {
@@ -118,11 +118,8 @@ iter_forward_from (struct GBr_MatrixTupleIter_opaque *iter, GrB_Index begin)
           if (v_nv != 0) break;
           ++begin;
      } while (begin < end);
-     if (begin == end) {
-          GrB_Index nvals;
-          GrB_Matrix_nvals (&nvals, iter->A);
+     if (begin == end)
           goto info_out; // No more entries, so "clean up" and report success.
-     }
      
      // begin holds the current row index, and v holds the current row.
 
@@ -143,6 +140,7 @@ iter_forward_from (struct GBr_MatrixTupleIter_opaque *iter, GrB_Index begin)
      // v is a handle / reference and already has been updated.
      iter->offset = 0;
      iter->current = begin;
+     iter->nvals_remaining -= v_nv;
 
      iter->v_pattern_len = v_nv;
 
@@ -151,6 +149,7 @@ iter_forward_from (struct GBr_MatrixTupleIter_opaque *iter, GrB_Index begin)
 info_out:
      // Ensure any future next() calls set depleted.
      iter->current = end;
+     iter->nvals_remaining = 0;
      iter->v_pattern_len = 0;
      iter->offset = 0;
      return info;
@@ -159,7 +158,7 @@ info_out:
 GrB_Info
 iter_init (struct GBr_MatrixTupleIter_opaque *iter, GrB_Matrix A, GrB_Index begin, GrB_Index end)
 {
-     GrB_Index nr, nc;
+     GrB_Index nr, nc, nvals_remaining;
      GrB_Info info;
      
      // Find first non-empty row in [begin, end).
@@ -174,7 +173,10 @@ iter_init (struct GBr_MatrixTupleIter_opaque *iter, GrB_Matrix A, GrB_Index begi
      if (info != GrB_SUCCESS) return info;
      info = GrB_Matrix_nrows (&nr, A);
      if (info != GrB_SUCCESS) return info;
+     info = GrB_Matrix_nvals (&nvals_remaining, A);
+     if (info != GrB_SUCCESS) return info;
      info = GxB_Matrix_type (&elt_type, A);
+     if (info != GrB_SUCCESS) return info;
 
      if (nc == 1) {   
           // Column vector, will treat as a row.
@@ -207,7 +209,8 @@ iter_init (struct GBr_MatrixTupleIter_opaque *iter, GrB_Matrix A, GrB_Index begi
      if (info != GrB_SUCCESS) return info;
 
      *iter = (struct GBr_MatrixTupleIter_opaque){ .A = A, .nr = nr, .nc = nc, 
-          .n = n, .desc = desc, .begin = begin, .end = end, .current = end,
+          .n = n, .nvals_remaining = nvals_remaining, .desc = desc, 
+          .begin = begin, .end = end, .current = end,
           .offset = 0, .v = v, .v_pattern_len = 0};
 
      info = iter_forward_from (iter, begin);
@@ -240,13 +243,13 @@ GxB_MatrixTupleIter_next (GxB_MatrixTupleIter gxb_iter, GrB_Index *row, GrB_Inde
           return GrB_NULL_POINTER;
      }
 
+     GrB_Info info = GrB_SUCCESS;
+
      // First, check if already depleted.
      if (iter->current == iter->end) {
           if (depleted)  *depleted = true;
           return GrB_SUCCESS;
      }
-
-     GrB_Info info;
 
      if (iter->offset == iter->v_pattern_len) {
           // The current vector is depleted, so forward.
