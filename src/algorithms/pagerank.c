@@ -74,7 +74,7 @@ GrB_Info Pagerank               // GrB_SUCCESS or error condition
 	// initializations
 	//--------------------------------------------------------------------------
 
-	GrB_Info info ;
+        GrB_Info info, retval ;
 	float rsum ;
 	float *X = NULL ;
 	LAGraph_PageRank *P = NULL ;
@@ -94,6 +94,13 @@ GrB_Info Pagerank               // GrB_SUCCESS or error condition
 	float one = 1.0 ;
 	float teleport = (one - DAMPING) / ((float) n) ;
 
+        I = rm_malloc (n * sizeof(*I));
+        X = rm_malloc (n * sizeof(*X));
+        if (I == NULL || X == NULL) {
+             retval = GrB_PANIC;
+             goto free_exit;
+        }
+
 	// r (i) = 1/n for all nodes i
 	float x = 1.0 / ((float) n) ;
 	assert(GrB_Vector_new(&r, GrB_FP32, n) == GrB_SUCCESS) ;
@@ -105,14 +112,15 @@ GrB_Info Pagerank               // GrB_SUCCESS or error condition
 	// GxB_print (d, 3) ;
 
 	// D = (1/diag (d)) * DAMPING
-	GrB_Type type ;
-	assert(GxB_Vector_export(&d, &type, &n, &nvals, &I, (void **)(&X), NULL) == GrB_SUCCESS) ;
-
-	for(int64_t k = 0 ; k < nvals ; k++) X [k] = DAMPING / X [k] ;
-	assert(GrB_Matrix_new(&D, GrB_FP32, n, n) == GrB_SUCCESS) ;
-	assert(GrB_Matrix_build(D, I, I, X, nvals, GrB_PLUS_FP32) == GrB_SUCCESS) ;
-	rm_free(I) ;
-	rm_free(X) ;
+        {
+             GrB_Index nvals;
+             info = GrB_Vector_extractTuples (I, X, &nvals, d);
+             assert (info == GrB_SUCCESS);
+             info = GrB_Matrix_new(&D, GrB_FP32, n, n);
+             assert (info == GrB_SUCCESS);
+             info = GrB_Matrix_build (D, I, I, X, nvals, GrB_PLUS_FP32);
+             assert (info == GrB_SUCCESS);
+        }
 
 	// C = diagonal matrix with all zeros on the diagonal.  This ensures that
 	// the vectors r and t remain dense, which is faster, and is required
@@ -121,9 +129,10 @@ GrB_Info Pagerank               // GrB_SUCCESS or error condition
 	// GxB_set (C, GxB_HYPER, GxB_ALWAYS_HYPER) ;
 
 	for(int64_t k = 0 ; k < n ; k++) {
-		// C(k,k) = 0
-		assert(GrB_Matrix_setElement(C, (float) 0, k, k) == GrB_SUCCESS) ;
+             I[k] = k;
+             X[k] = 0.0;
 	}
+        assert(GrB_Matrix_build (C, I, I, X, n, GrB_PLUS_FP32) == GrB_SUCCESS) ;
 
 	// make sure D is diagonal
 	assert(GrB_eWiseAdd(D, NULL, NULL, GrB_PLUS_FP32, D, C, NULL) == GrB_SUCCESS) ;
@@ -205,10 +214,13 @@ GrB_Info Pagerank               // GrB_SUCCESS or error condition
 	// [r,irank] = sort (r, 'descend') ;
 
 	// extract the contents of r
-	assert(GxB_Vector_export(&r, &type, &n, &nvals, &I, (void **)(&X), NULL) == GrB_SUCCESS) ;
+        assert(GrB_Vector_extractTuples (I, X, &nvals, r) == GrB_SUCCESS) ;
 
 	// this will always be true since r is dense, but check anyway:
-	if(nvals != n) return (GrB_PANIC) ;
+	if(nvals != n) { 
+             retval = GrB_PANIC ;
+             goto free_exit;
+        }
 
 	// P = struct (X,I)
 	P = rm_malloc(n * sizeof(LAGraph_PageRank)) ;
@@ -233,6 +245,7 @@ GrB_Info Pagerank               // GrB_SUCCESS or error condition
 
 	(*Phandle) = P ;
 
+free_exit:
 	// Clean up.
 	rm_free(I) ;
 	rm_free(X) ;
@@ -244,5 +257,5 @@ GrB_Info Pagerank               // GrB_SUCCESS or error condition
 	GrB_free(&d) ;
 	GrB_free(&op_diff) ;
 
-	return (GrB_SUCCESS) ;
+	return retval ;
 }
