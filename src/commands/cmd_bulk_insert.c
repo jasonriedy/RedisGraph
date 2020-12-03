@@ -53,16 +53,16 @@ void _MGraph_BulkInsert(void *args) {
 	}
 
 	// Read the user-provided counts for nodes and edges in the current query.
-	if(RedisModule_StringToLongLong(argv[0], &nodes_in_query) != REDISMODULE_OK) {
+	if(RedisModule_StringToLongLong(*argv++, &nodes_in_query) != REDISMODULE_OK) {
 		RedisModule_ReplyWithError(ctx, "Error parsing node count.");
 		goto cleanup;
 	}
 
-	if(RedisModule_StringToLongLong(argv[1], &relations_in_query) != REDISMODULE_OK) {
+	if(RedisModule_StringToLongLong(*argv++, &relations_in_query) != REDISMODULE_OK) {
 		RedisModule_ReplyWithError(ctx, "Error parsing relation count.");
 		goto cleanup;
 	}
-
+	argc -= 2; // already read node count and edge count
 
 	gc = GraphContext_Retrieve(ctx, rs_graph_name, false, true);
 	initial_node_count = Graph_NodeCount(gc->g);

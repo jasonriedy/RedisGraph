@@ -188,29 +188,10 @@ int _BulkInsert_Insert_Edges(RedisModuleCtx *ctx, GraphContext *gc, int token_co
 
 int BulkInsert(RedisModuleCtx *ctx, GraphContext *gc, RedisModuleString **argv, int argc) {
 
-	if(argc < 4) {
+	if(argc < 2) {
 		RedisModule_ReplyWithError(ctx, "Bulk insert format error, failed to parse bulk insert sections.");
 		return BULK_FAIL;
 	}
-
-	// Number of entities being created in this query
-    // (declared as long longs to match Redis conversion function)
-    long long nodes_in_query;
-    long long relations_in_query;
-
-    // Read the user-provided counts for nodes and edges in the current query.
-    if(RedisModule_StringToLongLong(*argv++, &nodes_in_query) != REDISMODULE_OK) {
-        RedisModule_ReplyWithError(ctx, "Error parsing node count.");
-        return BULK_FAIL;
-    }
-
-    if(RedisModule_StringToLongLong(*argv++, &relations_in_query) != REDISMODULE_OK) {
-        RedisModule_ReplyWithError(ctx, "Error parsing relation count.");
-        return BULK_FAIL;
-    }
-    argc -= 2; // already read node count and edge count
-    //printf("  BulkInsert: nodes in query %ld, relations in query %ld\n",
-            //nodes_in_query, relations_in_query);
 
 	// Read the number of node tokens
 	long long node_token_count;
