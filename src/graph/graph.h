@@ -139,6 +139,12 @@ void Graph_CreateNode(
 	Node *n
 );
 
+/* Allocate n_to_alloc new nodes with label in the graph.  This
+   returns the starting node id and assumes sequential allocation of
+   ids.
+ */
+uint64_t Graph_BulkCreateNodes(Graph *g, const int label, const uint64_t n_to_alloc);
+
 // Connects source node to destination node.
 // Returns 1 if connection is formed, 0 otherwise.
 int Graph_ConnectNodes(
