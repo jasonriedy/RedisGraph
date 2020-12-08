@@ -110,23 +110,61 @@ static inline SIValue _BulkInsert_ReadProperty(const char *data, size_t *data_id
 int _BulkInsert_ProcessNodeFile(RedisModuleCtx *ctx, GraphContext *gc, const char *data,
 								size_t data_len) {
 	size_t data_idx = 0;
+        size_t post_header_data_idx;
+        Graph *g = gc->g;
 
 	int label_id;
 	unsigned int prop_count;
 	Attribute_ID *prop_indicies = _BulkInsert_ReadHeader(gc, SCHEMA_NODE, data, &data_idx, &label_id,
 														 &prop_count);
+        post_header_data_idx = data_idx;
 
+        /* Two passes.  The first counts the number of vertices in *this*
+           file/chunk.  The second collects the properties. */
+        uint64_t n_to_alloc = 0;
 	while(data_idx < data_len) {
-		Node n;
-		Graph_CreateNode(gc->g, label_id, &n);
-		for(unsigned int i = 0; i < prop_count; i++) {
-			SIValue value = _BulkInsert_ReadProperty(data, &data_idx);
-			// Cypher does not support NULL as a property value.
-			// If we encounter one here, simply skip it.
-			if(SI_TYPE(value) == T_NULL) continue;
-			GraphEntity_AddProperty((GraphEntity *)&n, prop_indicies[i], value);
-		}
+             for(unsigned int i = 0; i < prop_count; i++) _BulkInsert_ReadProperty(data, &data_idx);
+             ++n_to_alloc;
 	}
+
+        const uint64_t start_id = Graph_BulkCreateNodes (g, label_id, n_to_alloc);
+
+        /* Pre-allocate entity space.  Can shrink if NULLs appear. */
+        if (prop_count > 0) {
+             for (uint64_t k = start_id; k < start_id + n_to_alloc; ++k) {
+                  Entity *en = DataBlock_GetItem (g->nodes, k);
+                  ASSERT (en);
+                  en->properties = rm_malloc (prop_count * sizeof (EntityProperty));
+                  ASSERT (en->properties);
+             }
+
+             uint64_t id = start_id;
+             data_idx = post_header_data_idx;
+             while (data_idx < data_len) {
+                  Entity *en = DataBlock_GetItem (g->nodes, id);
+                  ASSERT (en);
+                  ASSERT (en->prop_count == 0); // Allocated above, so should be zero.
+                  int prop_idx = 0;
+                  for(unsigned int i = 0; i < prop_count; i++) {
+                       SIValue value = _BulkInsert_ReadProperty(data, &data_idx);
+                       // Cypher does not support NULL as a property value.
+                       // If we encounter one here, simply skip it.
+                       if(SI_TYPE(value) == T_NULL) continue;
+                       en->properties[prop_idx].id = prop_indicies[i];
+                       en->properties[prop_idx].value = SI_CloneValue(value);
+                       ++prop_idx;
+                  }
+                  en->prop_count = prop_idx;
+                  if (prop_idx != prop_count) {
+                       // Shrink-wrap the allocation.
+                       EntityProperty *tmp = rm_realloc (en->properties, prop_idx * sizeof (*tmp));
+                       ASSERT(tmp != NULL);
+                       if (tmp != NULL)
+                            en->properties = tmp; /* A "soft" failure.  The memory is there but wasted. */
+                  }
+                  ++id;
+             }
+        }
 
 	free(prop_indicies);
 	return BULK_OK;

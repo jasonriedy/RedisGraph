@@ -77,6 +77,11 @@ void *DataBlock_GetItem(const DataBlock *dataBlock, uint64_t idx);
 // return a pointer to the newly allocated item.
 void *DataBlock_AllocateItem(DataBlock *dataBlock, uint64_t *idx);
 
+/* Allocate n_to_alloc new items in dataBlock, returning the start
+   index.  Use this routine in bulk insertion and initial creation.
+   Hence, this routine does *not* back-fill deleted items. */
+uint64_t DataBlock_BulkAllocateItems(DataBlock *dataBlock, uint64_t n_to_alloc);
+
 // Removes item at position idx.
 void DataBlock_DeleteItem(DataBlock *dataBlock, uint64_t idx);
 

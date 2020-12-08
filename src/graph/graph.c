@@ -542,6 +542,59 @@ void Graph_GetEdgesConnectingNodes(const Graph *g, NodeID srcID, NodeID destID, 
 	}
 }
 
+uint64_t Graph_BulkCreateNodes(Graph *g, const int label, const uint64_t n_to_alloc)
+/* Allocate n_to_alloc new nodes with label in the graph.  This
+   returns the starting node id and assumes sequential allocation of
+   ids.
+ */
+{
+	ASSERT(g);
+
+        DataBlock *nodes = g->nodes;
+        const uint64_t start_id = DataBlock_BulkAllocateItems (nodes, n_to_alloc);
+
+        for (uint64_t k = start_id; k < start_id + n_to_alloc; ++k) {
+             Entity *en = DataBlock_GetItem (nodes, k);
+             en->prop_count = 0;
+             en->properties = NULL;
+        }
+
+        if (label != GRAPH_NO_LABEL) {
+             const GrB_Index dims = Graph_RequiredMatrixDim(g);
+             RG_Matrix matrix = g->labels[label];
+             _MatrixResizeToCapacity(g, matrix);
+             GrB_Matrix m = RG_Matrix_Get_GrB_Matrix(matrix);
+
+             GrB_Info info;
+             UNUSED(info);
+
+             GrB_Index *I;
+             bool *X;
+             I = rm_malloc (n_to_alloc * sizeof (*I));
+             ASSERT(I != NULL);
+             X = rm_malloc (n_to_alloc * sizeof (*X));
+             ASSERT(X != NULL);
+             for (uint64_t k = 0; k < n_to_alloc; ++k) {
+                  I[k] = k;
+                  X[k] = true;
+             }
+
+             GrB_Matrix diag;
+             info = GrB_Matrix_new (&diag, GrB_BOOL, n_to_alloc, n_to_alloc);
+             ASSERT(info == GrB_SUCCESS);
+             info = GrB_Matrix_build (diag, I, I, X, n_to_alloc, GxB_ANY_BOOL);
+             ASSERT(info == GrB_SUCCESS);
+             for (uint64_t k = 0; k < n_to_alloc; ++k) I[k] += start_id;
+             info = GrB_assign (m, GrB_NULL, GrB_NULL, diag, I, n_to_alloc, I, n_to_alloc, GrB_NULL);
+             ASSERT(info == GrB_SUCCESS);
+             GrB_free (&diag);
+             rm_free (X);
+             rm_free (I);
+        }
+
+        return start_id;
+}
+
 void Graph_CreateNode(Graph *g, int label, Node *n) {
 	ASSERT(g);
 
