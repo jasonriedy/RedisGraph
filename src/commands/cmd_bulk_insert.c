@@ -68,7 +68,7 @@ void _MGraph_BulkInsert(CommandCtx *command_ctx, RedisModuleString **argv, int a
         MATRIX_POLICY saved_policy = Graph_GetMatrixPolicy (gc->g);
         Graph_SetMatrixPolicy(gc->g, DISABLED);
 
-	int rc = BulkInsert(ctx, gc, argv, argc);
+	int rc = BulkInsert(ctx, gc, argv, argc, nodes_in_query, relations_in_query);
 
 	if(rc == BULK_FAIL) {
 		// If insertion failed, clean up keyspace and free added entities.
