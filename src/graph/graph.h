@@ -158,6 +158,10 @@ int Graph_ConnectNodes(
 	Edge *e
 );
 
+// Connects I->J for each of the n_new_edges entries.
+// Returns the id of the first edge or (EdgeID)-1 if no new edges are allocated.
+EdgeID Graph_BulkConnectNodes(Graph *g, NodeID *I, NodeID *J, const size_t n_new_edges, int r);
+
 // Removes node and all of its connections within the graph.
 void Graph_DeleteNode(
 	Graph *g,

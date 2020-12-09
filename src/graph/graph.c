@@ -630,6 +630,66 @@ void Graph_CreateNode(Graph *g, int label, Node *n) {
 	}
 }
 
+static void add_relation_id (EdgeID* z_out, EdgeID x_in, EdgeID y_newid)
+{
+    EdgeID *ids;
+    /* Single edge ID,
+     * switching from single edge ID to multiple IDs. */
+    if(SINGLE_EDGE(x_in)) {
+        ids = array_new(EdgeID, 2);
+        ids = array_append(ids, SINGLE_EDGE_ID(x_in));
+        ids = array_append(ids, SINGLE_EDGE_ID(y_newid));
+        // TODO: Make sure MSB of ids isn't on.
+        *z_out = (EdgeID)ids;
+    } else {
+        // Multiple edges, adding another edge.
+        ids = (EdgeID *)(x_in);
+        ids = array_append(ids, SINGLE_EDGE_ID(y_newid));
+        *z_out = (EdgeID)ids;
+    }
+}
+
+static void combine_relation_ids (EdgeID* z_out, EdgeID x_in, EdgeID y_in)
+/*
+  z_out becomes the merger of x_in and y_in.  If one or the other is
+  an array, that array is extended.  If both are arrays, then x_in is
+  extended and y_in is freed.
+
+  NOTE: Ensure that y_in is not used again in calling code.
+ */
+{
+    EdgeID *ids;
+    /* Single edge ID,
+     * switching from single edge ID to multiple IDs. */
+    if (SINGLE_EDGE(x_in) && SINGLE_EDGE(y_in)) {
+        ids = array_new(EdgeID, 2);
+        ids = array_append(ids, SINGLE_EDGE_ID(x_in));
+        ids = array_append(ids, SINGLE_EDGE_ID(y_in));
+        *z_out = (EdgeID)ids;
+    } else if ((!(SINGLE_EDGE(x_in)) && SINGLE_EDGE(y_in))) {
+        // Multiple edges, adding another edge.
+        ids = (EdgeID *)(x_in);
+        ids = array_append(ids, SINGLE_EDGE_ID(y_in));
+        *z_out = (EdgeID)ids;
+    } else if ((SINGLE_EDGE(x_in) && !(SINGLE_EDGE(y_in)))) {
+        // Multiple edges, adding another edge.
+        ids = (EdgeID *)(y_in);
+        ids = array_append(ids, SINGLE_EDGE_ID(x_in));
+        *z_out = (EdgeID)ids;
+    } else {
+         ids = (EdgeID*)x_in;
+         array_ensure_append (ids, (EdgeID*)y_in, array_len((EdgeID*)y_in), EdgeID);
+         *z_out = (EdgeID)ids;
+         array_free ((EdgeID*)y_in);
+    }
+}
+
+/*
+  XXX MULTI-EDGE-PROBLEM: Non-multi-edge graphs are not treated
+  uniformly.  FormConnection handles them, but ConnectNodes returns 1
+  even if the edge already is there.  And which id overwrites which,
+  what to do with the old edge id, etc. is undefined.
+ */
 void Graph_FormConnection(Graph *g, NodeID src, NodeID dest, EdgeID edge_id, int r) {
 	GrB_Info info;
 	UNUSED(info);
@@ -721,6 +781,240 @@ int Graph_ConnectNodes(Graph *g, NodeID src, NodeID dest, int r, Edge *e) {
 	e->destNodeID = dest;
 	Graph_FormConnection(g, src, dest, id, r);
 	return 1;
+}
+
+EdgeID Graph_BulkConnectNodes(Graph *g, NodeID *I, NodeID *J, const size_t n_new_edges, int r)
+/* Add n_new_edges into graph g with relation id r.  This returns the
+   starting edge id and assumes sequential allocation of ids.  Returns
+   (EdgeID)-1 if no new edges were created, which never occurs when
+   the relation supports multi-edges.
+
+   NOTE:  src, dest may not be unique in this call or across calls.
+ */
+{
+     EdgeID out;
+     /*
+       1. Pre-allocate edge records.
+       2. Find duplicate edges in the *input*, but do not merge yet.
+       3. Update the adjacency matrices.
+       4. Update the existing relation matrix if it exists.
+          4a. Merge the input and existing id arrays.
+          4b. Uniq / compress the [I,J,id] entries.
+          4c. If multi-graph is enabled, merge duplicate id arrays. If
+          not, ensure previous id datablock entries are marked deleted
+          and assign new ones.
+
+       Edge properties are handled in the *calling* routine.
+      */
+
+     DataBlock *edges = g->edges;
+     const uint64_t start_id = DataBlock_BulkAllocateItems (edges, n_new_edges);
+     uint64_t end_id = start_id + n_new_edges;
+     for (uint64_t k = start_id; k < start_id + n_new_edges; ++k) {
+          Entity *en = DataBlock_GetItem (edges, k);
+          en->prop_count = 0;
+          en->properties = NULL;
+     }
+
+     /* Get the existing relation matrix and ensure it's of sufficient
+        size.  Moved here to check if multi-edge is enabled. */
+     ASSERT(r != GRAPH_NO_RELATION);
+
+     RG_Matrix matrix = g->relations[r];
+     _MatrixResizeToCapacity(g, matrix);
+     const bool multi_edge = _RG_Matrix_MultiEdgeEnabled (matrix);
+
+     /*
+        Find duplicate entries in the *input*.
+
+        Merges happen into earlier records, so the second argument
+        always is a single edge and add_relation_id works.
+      */
+
+     rax *rt = raxNew();
+     EdgeID *all_ids = rm_malloc (n_new_edges * sizeof (*all_ids));
+     for (uint64_t k = 0; k < n_new_edges; ++k)
+          all_ids[k] = SET_MSB(start_id + k);
+
+     size_t n_uniq_new_edges = n_new_edges;
+     for (size_t k = 0; k < n_new_edges; ++k) {
+          int lookup;
+          EdgeID cur_id = all_ids[k];
+          EdgeID *old_id_ptr = NULL;
+          GrB_Index IJ[2] = { I[k], J[k] };
+
+          lookup = raxTryInsert (rt, (unsigned char*)IJ, sizeof(IJ), &all_ids[k], (void**)&old_id_ptr);
+          if (lookup == 0) {
+               if (multi_edge) {
+                    add_relation_id (old_id_ptr, *old_id_ptr, cur_id);
+                    if (!(SINGLE_EDGE(cur_id))) array_free ((EdgeID*)cur_id);
+               } else {
+                    DataBlock_DeleteItem (edges, cur_id);
+               }
+               all_ids[k] = (EdgeID)-1; // Mark as a duplicate.
+               --n_uniq_new_edges;
+          }
+     }
+
+     /* Create and union in the adjacency matrices.  Matrices
+        already have been resized.  Now build for the full size and eWiseAdd. */
+     GrB_Matrix addl_adj = GrB_NULL;  /* Used as a mask later. */
+     GrB_Index nrows;
+
+     {
+          GrB_Matrix adj = Graph_GetAdjacencyMatrix (g);
+          GrB_Matrix tadj = Graph_GetTransposedAdjacencyMatrix (g);
+          GrB_Info info;
+          UNUSED(info);
+
+          info = GrB_Matrix_nrows (&nrows, adj);
+          ASSERT (info == GrB_SUCCESS);
+
+          bool *X = rm_malloc (n_new_edges * sizeof (*X));
+          ASSERT (X != NULL);
+          for (GrB_Index k = 0; k < n_new_edges; ++k) X[k] = true;
+
+          info = GrB_Matrix_new (&addl_adj, GrB_BOOL, nrows, nrows);
+          info = GrB_Matrix_build (addl_adj, I, J, X, n_new_edges, GxB_PAIR_BOOL);
+          ASSERT (info == GrB_SUCCESS);
+
+          info = GrB_eWiseAdd (adj, GrB_NULL, GrB_NULL, GrB_LOR, adj, addl_adj, GrB_NULL);
+          ASSERT (info == GrB_SUCCESS);
+          info = GrB_eWiseAdd (tadj, GrB_NULL, GrB_NULL, GrB_LOR, tadj, addl_adj, GrB_DESC_T1);
+          ASSERT (info == GrB_SUCCESS);
+
+          rm_free (X);
+     }
+
+     /* Find duplicate, pre-existing edges for the relation matrix.
+        New relation matrices are built in the header reader in
+        bulk_insert.c's routines, so this routine cannot assume the
+        matrix is empty.  Another "file" in a GRAPH.CREATE call may
+        have added entries.
+
+        Note: If a GraphBLAS implementation library properly
+        supports the dup GrB_BinaryOp parameter in
+        GrB_Matrix_build, *AND* if the GraphBLAS routines can
+        manipulate both the host memory and the GraphBLAS memory,
+        that operation could extend the id arrays itself through a
+        user-defined function.  Managing memory out-of-band that
+        way is a bit tricky if the build routine is parallel.
+
+        The current implementation does not assume that the host and
+        GraphBLAS can manage each others' memory, e.g. GraphBLAS is
+        on an accelerator.
+     */
+
+     GrB_Matrix relmat = RG_Matrix_Get_GrB_Matrix (matrix);
+     GrB_Matrix relmat_slice = GrB_NULL;
+     GrB_Info info;
+     UNUSED(info);
+
+     info = GrB_Matrix_new (&relmat_slice, GrB_UINT64, nrows, nrows);
+     ASSERT (info == GrB_SUCCESS);
+     // Extract through a mask retrieving only changed entries.
+     info = GrB_Matrix_extract (relmat_slice, addl_adj, GrB_NULL, relmat,
+                                GrB_ALL, nrows, GrB_ALL, nrows, GrB_NULL);
+     ASSERT (info == GrB_SUCCESS);
+
+     GrB_Index old_relmat_nvals;
+     info = GrB_Matrix_nvals (&old_relmat_nvals, relmat_slice);
+     ASSERT (info == GrB_SUCCESS);
+
+     if (old_relmat_nvals) { // Hopefully unlikely.
+          // Merge in any existing edge ids.
+          // Extract and insert into the hash table.
+          GrB_Index *old_I;
+          GrB_Index *old_J;
+          uint64_t *old_X;
+          GrB_Index actually_extracted;
+
+          old_I = rm_malloc (2 * old_relmat_nvals * sizeof (*old_I));
+          old_J = &old_I[old_relmat_nvals];
+          old_X = rm_malloc (old_relmat_nvals * sizeof (*old_X));
+          info = GrB_Matrix_extractTuples (old_I, old_J, old_X, &actually_extracted, relmat_slice);
+          ASSERT (info == GrB_SUCCESS);
+          ASSERT (actually_extracted == old_relmat_nvals);
+
+          if(_RG_Matrix_MultiEdgeEnabled(matrix)) {
+               for (size_t k = 0; k < old_relmat_nvals; ++k) {
+                    int lookup;
+                    EdgeID old_id = old_X[k];
+                    EdgeID *new_id_ptr;
+                    GrB_Index IJ[2] = { old_I[k], old_J[k] };
+
+                    new_id_ptr = raxFind (rt, (unsigned char*)IJ, sizeof(IJ));
+                    ASSERT (new_id_ptr != raxNotFound); // Extracted through the addl_adj = [I,J] mask.
+                    combine_relation_ids (new_id_ptr, *new_id_ptr, old_id); // invalidates old_id
+               }
+          } else {
+               // Caveat: See comment marked MULTI-EDGE-PROBLEM above.
+               // Over-write existing edges and mark the overlapping
+               // newly allocated records as deleted.
+               for (size_t k = 0; k < old_relmat_nvals; ++k) {
+                    int lookup;
+                    EdgeID old_id = old_X[k];
+                    EdgeID *new_id_ptr;
+                    GrB_Index IJ[2] = { old_I[k], old_J[k] };
+
+                    new_id_ptr = raxFind (rt, (unsigned char*)IJ, sizeof(IJ));
+                    ASSERT (new_id_ptr != raxNotFound); // Extracted through the addl_adj = [I,J] mask.
+                    --n_uniq_new_edges;
+                    ASSERT((SINGLE_EDGE(*new_id_ptr)));
+                    DataBlock_DeleteItem (edges, *new_id_ptr);
+               }
+          }
+          rm_free (old_X);
+          rm_free (old_I);
+     }
+     // No longer need the hash table, and it will be incorrect shortly.
+     raxFree (rt);
+     rt = NULL;
+
+     if (n_uniq_new_edges == 0) {
+          out = (EdgeID)-1;
+          goto cleanup;
+     }
+
+     // Compress the I, J, all_ids down to unique edges.
+     uint64_t n_uniq_edges = 0;
+     {
+          size_t first = 0;
+          do {
+               if (all_ids[first] != -1) {
+                    I[n_uniq_edges] = I[first];
+                    J[n_uniq_edges] = J[first];
+                    all_ids[n_uniq_edges] = all_ids[first];
+                    ++n_uniq_edges;
+               }
+          } while (++first < n_new_edges);
+     }
+     ASSERT (n_uniq_edges > 0); // Utter paranoia.
+
+     // Build the matrix to be inserted.
+     info = GrB_Matrix_clear (relmat_slice);
+     ASSERT (info == GrB_SUCCESS);
+     // No duplicates left, but pick the first just in case.
+     info = GrB_Matrix_build (relmat_slice, I, J, all_ids, n_uniq_edges, GrB_FIRST_UINT64);
+     ASSERT (info == GrB_SUCCESS);
+
+     // At long last, replace the entries.  These could be GrB_assign through an addl_adj mask.
+     info = GrB_eWiseAdd (relmat, GrB_NULL, GrB_NULL, GrB_SECOND_UINT64, relmat, relmat_slice, GrB_NULL);
+     bool maintain_transpose;
+     Config_Option_get(Config_MAINTAIN_TRANSPOSE, &maintain_transpose);
+     if (maintain_transpose) { // Creation, so assume symmetric...
+          RG_Matrix t_matrix = g->t_relations[r];
+          g->SynchronizeMatrix(g, t_matrix);
+          GrB_Matrix t_relmat = RG_Matrix_Get_GrB_Matrix (t_matrix);
+          info = GrB_eWiseAdd (t_relmat, GrB_NULL, GrB_NULL, GrB_SECOND_UINT64, t_relmat,
+                               relmat_slice, GrB_DESC_T1);
+     }
+
+     out = start_id;
+cleanup:
+     GrB_free (&relmat_slice);
+     GrB_free (&addl_adj);
+     return out;
 }
 
 /* Retrieves all either incoming or outgoing edges
