@@ -65,7 +65,8 @@ void _MGraph_BulkInsert(CommandCtx *command_ctx, RedisModuleString **argv, int a
 	Graph_AcquireWriteLock(gc->g);
 
 	// Disable matrix synchronization for bulk insert operation
-	Graph_SetMatrixPolicy(gc->g, RESIZE_TO_CAPACITY);
+        MATRIX_POLICY saved_policy = Graph_GetMatrixPolicy (gc->g);
+        Graph_SetMatrixPolicy(gc->g, DISABLED);
 
 	int rc = BulkInsert(ctx, gc, argv, argc);
 
@@ -84,6 +85,7 @@ void _MGraph_BulkInsert(CommandCtx *command_ctx, RedisModuleString **argv, int a
 
 cleanup:
 	if(gc) {
+             Graph_SetMatrixPolicy(gc->g, saved_policy);
 		Graph_ReleaseLock(gc->g);
 		GraphContext_Release(gc);
 	}
