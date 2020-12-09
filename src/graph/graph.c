@@ -327,6 +327,15 @@ void Graph_SetMatrixPolicy(Graph *g, MATRIX_POLICY policy) {
 	}
 }
 
+/* Retrieve the current behavior for matrix creations and retrievals on this graph. */
+MATRIX_POLICY Graph_GetMatrixPolicy(const Graph *g) {
+     if (g->SynchronizeMatrix == _MatrixSynchronize) return SYNC_AND_MINIMIZE_SPACE;
+     if (g->SynchronizeMatrix == _MatrixResizeToCapacity) return RESIZE_TO_CAPACITY;
+     if (g->SynchronizeMatrix == _MatrixNOP) return DISABLED;
+     ASSERT(false);
+     return DISABLED;
+}
+
 /* Synchronize and resize all matrices in graph. */
 void Graph_ApplyAllPending(Graph *g) {
 	RG_Matrix M;
