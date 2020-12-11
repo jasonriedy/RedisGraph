@@ -661,65 +661,145 @@ int Graph_ConnectNodes(Graph *g, NodeID src, NodeID dest, int r, Edge *e) {
 	return 1;
 }
 
+static void
+gather_edges (const Graph *g, GrB_Vector v, const GrB_Index vtx, const GRAPH_EDGE_DIR dir,
+              const int edgeType, Edge **edges_in, GrB_Index **neigh_in, uint64_t **ids_in)
+{
+     Edge *edges = *edges_in;
+     GrB_Index *neigh = *neigh_in;
+     uint64_t *ids = *ids_in;
+     GrB_Index nvals;
+     GrB_Info info = GrB_Vector_nvals (&nvals, v); UNUSED(info);
+     ASSERT (info == GrB_SUCCESS);
+
+     ASSERT (array_len (neigh) == 0 && array_len (ids) == 0);
+
+     ids = array_grow (ids, nvals);
+     neigh = array_grow (neigh, nvals);
+     ASSERT (ids != NULL && neigh != NULL);
+
+     GrB_Index nvals_saved = nvals; UNUSED(nvals_saved);
+     GrB_Vector_extractTuples (neigh, ids, &nvals, v);
+     ASSERT (nvals_saved == nvals);
+
+     Edge e;
+     if (GRAPH_EDGE_DIR_OUTGOING == dir)
+          e.srcNodeID = vtx;
+     else
+          e.destNodeID = vtx;
+     e.relationID = edgeType;
+     for (size_t k = 0; k < nvals; ++k) {
+          GrB_Index dest = neigh[k];
+          EdgeID edge_id = ids[k];
+
+          if (GRAPH_EDGE_DIR_OUTGOING == dir)
+               e.destNodeID = dest;
+          else
+               e.srcNodeID = dest;
+
+          if (SINGLE_EDGE(edge_id)) {
+               edge_id = SINGLE_EDGE_ID(edge_id);
+               e.id = edge_id;
+               e.entity = DataBlock_GetItem (g->edges, edge_id);
+               ASSERT(e.entity);
+               edges = array_append (edges, e);
+          } else {
+               EdgeID* edge_ids = (EdgeID*)edge_id;
+               size_t nedges = array_len (edge_ids);
+               for (size_t idk = 0; idk < nedges; ++idk) {
+                    e.id = edge_ids[idk];
+                    e.entity = DataBlock_GetItem (g->edges, e.id);
+                    ASSERT(e.entity);
+                    edges = array_append (edges, e);
+               }
+          }
+     }
+
+     array_clear (neigh); *neigh_in = neigh;
+     array_clear (ids); *ids_in = ids;
+     *edges_in = edges;
+}
+
 /* Retrieves all either incoming or outgoing edges
  * to/from given node N, depending on given direction. */
 void Graph_GetNodeEdges(const Graph *g, const Node *n, GRAPH_EDGE_DIR dir, int edgeType,
-						Edge **edges) {
+                        Edge **edges) {
 	ASSERT(g && n && edges);
-	GrB_Matrix M;
-	NodeID srcNodeID;
-	NodeID destNodeID;
-	GxB_MatrixTupleIter *tupleIter;
+        GrB_Index *neigh = NULL;
+        uint64_t *ids = NULL;
+        const NodeID vtx = ENTITY_GET_ID(n);
 
 	if(edgeType == GRAPH_UNKNOWN_RELATION) return;
 
-	// Outgoing.
-	if(dir == GRAPH_EDGE_DIR_OUTGOING || dir == GRAPH_EDGE_DIR_BOTH) {
-		/* If a relationship type is specified, retrieve the appropriate relation matrix;
-		 * otherwise use the overall adjacency matrix. */
-		if(edgeType == GRAPH_NO_RELATION) M = Graph_GetAdjacencyMatrix(g);
-		else M = Graph_GetRelationMatrix(g, edgeType);
+        neigh = array_new (GrB_Index, 32);
+        ids = array_new (uint64_t, 32);
+        ASSERT (ids != NULL && neigh != NULL);
 
-		/* Construct an iterator to traverse the source node's row, which contains
-		 * all outgoing edges. */
-		GxB_MatrixTupleIter_new(&tupleIter, M);
-		srcNodeID = ENTITY_GET_ID(n);
-		GxB_MatrixTupleIter_iterate_row(tupleIter, srcNodeID);
-		while(true) {
-			bool depleted = false;
-			GxB_MatrixTupleIter_next(tupleIter, NULL, &destNodeID, &depleted);
-			if(depleted) break;
-			// Collect all edges connecting this source node to each of its destinations.
-			Graph_GetEdgesConnectingNodes(g, srcNodeID, destNodeID, edgeType, edges);
-		}
-		GxB_MatrixTupleIter_free(tupleIter);
-	}
+	bool maintain_transpose;
+	Config_Option_get(Config_MAINTAIN_TRANSPOSE, &maintain_transpose);
 
-	// Incoming.
-	if(dir == GRAPH_EDGE_DIR_INCOMING || dir == GRAPH_EDGE_DIR_BOTH) {
-		/* Retrieve the transposed adjacency matrix, regardless of whether or not
-		 * a relationship type is specified. */
-		M = Graph_GetTransposedAdjacencyMatrix(g);
+        if (edgeType != GRAPH_NO_RELATION) {
+             GrB_Matrix R = Graph_GetRelationMatrix(g, edgeType);
+             GrB_Index N;
+             GrB_Vector v = GrB_NULL;
+             GrB_Info info; UNUSED(info);
 
-		/* Construct an iterator to traverse the node's row, which in the transposed
-		 * adjacency matrix contains all incoming edges. */
-		GxB_MatrixTupleIter_new(&tupleIter, M);
-		destNodeID = ENTITY_GET_ID(n);
-		GxB_MatrixTupleIter_iterate_row(tupleIter, destNodeID);
+             info = GrB_Matrix_ncols (&N, R);
+             ASSERT (info == GrB_SUCCESS);
+             info = GrB_Vector_new (&v, GrB_UINT64, N);
+             ASSERT (info == GrB_SUCCESS);
+             if (dir == GRAPH_EDGE_DIR_OUTGOING || dir == GRAPH_EDGE_DIR_BOTH) {
+                  info = GrB_extract (v, GrB_NULL, GrB_NULL, R, GrB_ALL, N, vtx, GrB_DESC_RT0);
+                  ASSERT (info == GrB_SUCCESS);
+                  gather_edges (g, v, vtx, GRAPH_EDGE_DIR_OUTGOING, edgeType, edges, &neigh, &ids);
+             }
+             if (dir == GRAPH_EDGE_DIR_INCOMING || dir == GRAPH_EDGE_DIR_BOTH) {
+                  if (maintain_transpose) {
+                       GrB_Matrix Rt = Graph_GetTransposedRelationMatrix(g, edgeType);
+                       info = GrB_extract (v, GrB_NULL, GrB_NULL, Rt, GrB_ALL, N, vtx, GrB_DESC_RT0);
+                  } else
+                       info = GrB_extract (v, GrB_NULL, GrB_NULL, R, GrB_ALL, N, vtx, GrB_DESC_R);
+                  ASSERT (info == GrB_SUCCESS);
+                  gather_edges (g, v, vtx, GRAPH_EDGE_DIR_INCOMING, edgeType, edges, &neigh, &ids);
+             }
+             GrB_free (&v);
+        } else {
+             GrB_Matrix adj = Graph_GetAdjacencyMatrix (g);
+             GrB_Vector v = GrB_NULL;
+             GrB_Index N;
+             GrB_Info info; UNUSED(info);
+             const int relationCount = Graph_RelationTypeCount(g);
 
-		while(true) {
-			bool depleted = false;
-			GxB_MatrixTupleIter_next(tupleIter, NULL, &srcNodeID, &depleted);
-			if(depleted) break;
-			/* Collect all edges connecting this destination node to each of its sources.
-			 * This call will only collect edges of the appropriate relationship type,
-			 * if one is specified. */
-			Graph_GetEdgesConnectingNodes(g, srcNodeID, destNodeID, edgeType, edges);
-		}
+             info = GrB_Matrix_ncols (&N, adj);
+             ASSERT (info == GrB_SUCCESS);
+             info = GrB_Vector_new (&v, GrB_UINT64, N);
+             ASSERT (info == GrB_SUCCESS);
 
-		// Clean up
-		GxB_MatrixTupleIter_free(tupleIter);
-	}
+             if (dir == GRAPH_EDGE_DIR_OUTGOING || dir == GRAPH_EDGE_DIR_BOTH) {
+                  for(int i = 0; i < relationCount; i++) {
+                       GrB_Matrix R = Graph_GetRelationMatrix (g, i);
+                       info = GrB_extract (v, GrB_NULL, GrB_NULL, R, GrB_ALL, N, vtx, GrB_DESC_RT0);
+                       ASSERT (info == GrB_SUCCESS);
+                       gather_edges (g, v, vtx, GRAPH_EDGE_DIR_OUTGOING, i, edges, &neigh, &ids);
+                  }
+             }
+             if (dir == GRAPH_EDGE_DIR_INCOMING || dir == GRAPH_EDGE_DIR_BOTH) {
+                  for(int i = 0; i < relationCount; i++) {
+                       if (maintain_transpose) {
+                            GrB_Matrix Rt = Graph_GetTransposedRelationMatrix(g, i);
+                            info = GrB_extract (v, GrB_NULL, GrB_NULL, Rt, GrB_ALL, N, vtx, GrB_DESC_RT0);
+                       } else {
+                            GrB_Matrix R = Graph_GetRelationMatrix(g, i);
+                            info = GrB_extract (v, GrB_NULL, GrB_NULL, R, GrB_ALL, N, vtx, GrB_DESC_R);
+                       }
+                       ASSERT (info == GrB_SUCCESS);
+                       gather_edges (g, v, vtx, GRAPH_EDGE_DIR_INCOMING, i, edges, &neigh, &ids);
+                  }
+             }
+             GrB_free (&v);
+        }
+        array_free (neigh);
+        array_free (ids);
 }
 
 /* Removes an edge from Graph and updates graph relevent matrices. */
