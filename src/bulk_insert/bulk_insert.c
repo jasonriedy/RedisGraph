@@ -108,30 +108,67 @@ static inline SIValue _BulkInsert_ReadProperty(const char *data, size_t *data_id
 int _BulkInsert_ProcessNodeFile(RedisModuleCtx *ctx, GraphContext *gc, const char *data,
 								size_t data_len) {
 	size_t data_idx = 0;
+        Graph *g = gc->g;
 
 	int label_id;
 	unsigned int prop_count;
 	Attribute_ID *prop_indicies = _BulkInsert_ReadHeader(gc, SCHEMA_NODE, data, &data_idx, &label_id,
 														 &prop_count);
+        const size_t post_header_data_idx = data_idx;
 
+        /* Two passes.  The first counts the number of vertices in *this*
+           file/chunk.  The second collects the properties. */
+        uint64_t n_to_alloc = 0;
 	while(data_idx < data_len) {
-		Node n;
-		Graph_CreateNode(gc->g, label_id, &n);
-		for(unsigned int i = 0; i < prop_count; i++) {
-			SIValue value = _BulkInsert_ReadProperty(data, &data_idx);
-			// Cypher does not support NULL as a property value.
-			// If we encounter one here, simply skip it.
-			if(SI_TYPE(value) == T_NULL) continue;
-			GraphEntity_AddProperty((GraphEntity *)&n, prop_indicies[i], value);
-		}
+             for(unsigned int i = 0; i < prop_count; i++) _BulkInsert_ReadProperty(data, &data_idx);
+             ++n_to_alloc;
 	}
+
+        const uint64_t start_id = Graph_BulkCreateNodes (g, label_id, n_to_alloc);
+
+        /* Pre-allocate entity space.  Can shrink if NULLs appear. */
+        if (prop_count > 0) {
+             for (uint64_t k = start_id; k < start_id + n_to_alloc; ++k) {
+                  Entity *en = DataBlock_GetItem (g->nodes, k);
+                  ASSERT (en);
+                  en->properties = rm_malloc (prop_count * sizeof (EntityProperty));
+                  ASSERT (en->properties);
+             }
+
+             uint64_t id = start_id;
+             data_idx = post_header_data_idx;
+             while (data_idx < data_len) {
+                  Entity *en = DataBlock_GetItem (g->nodes, id);
+                  ASSERT (en);
+                  ASSERT (en->prop_count == 0); // Allocated above, so should be zero.
+                  int prop_idx = 0;
+                  for(unsigned int i = 0; i < prop_count; i++) {
+                       SIValue value = _BulkInsert_ReadProperty(data, &data_idx);
+                       // Cypher does not support NULL as a property value.
+                       // If we encounter one here, simply skip it.
+                       if(SI_TYPE(value) == T_NULL) continue;
+                       en->properties[prop_idx].id = prop_indicies[i];
+                       en->properties[prop_idx].value = SI_CloneValue(value);
+                       ++prop_idx;
+                  }
+                  en->prop_count = prop_idx;
+                  if (prop_idx != prop_count) {
+                       // Shrink-wrap the allocation.
+                       EntityProperty *tmp = rm_realloc (en->properties, prop_idx * sizeof (*tmp));
+                       ASSERT(tmp != NULL);
+                       if (tmp != NULL)
+                            en->properties = tmp; /* A "soft" failure.  The memory is there but wasted. */
+                  }
+                  ++id;
+             }
+        }
 
 	free(prop_indicies);
 	return BULK_OK;
 }
 
 int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc, const char *data,
-									size_t data_len) {
+                                    size_t data_len, NodeID* I, NodeID *J) {
 	size_t data_idx = 0;
 
 	int reltype_id;
@@ -139,31 +176,90 @@ int _BulkInsert_ProcessRelationFile(RedisModuleCtx *ctx, GraphContext *gc, const
 	// Read property keys from header and update schema
 	Attribute_ID *prop_indicies = _BulkInsert_ReadHeader(gc, SCHEMA_EDGE, data, &data_idx, &reltype_id,
 														 &prop_count);
-	NodeID src;
-	NodeID dest;
+        const size_t post_header_data_idx = data_idx;
 
-	while(data_idx < data_len) {
-		Edge e;
-		// Next 8 bytes are source ID
-		src = *(NodeID *)&data[data_idx];
-		data_idx += sizeof(NodeID);
-		// Next 8 bytes are destination ID
-		dest = *(NodeID *)&data[data_idx];
-		data_idx += sizeof(NodeID);
+        uint64_t n_relations_in_chunk = 0;
 
-		Graph_ConnectNodes(gc->g, src, dest, reltype_id, &e);
+        if (prop_count > 0) {
+             while (data_idx < data_len) {
+                  ++n_relations_in_chunk;
+                  data_idx += 2 * sizeof (NodeID); // Skip vertices.
+                  for(unsigned int i = 0; i < prop_count; i ++)
+			_BulkInsert_ReadProperty(data, &data_idx);
+             }
+        } else {
+             n_relations_in_chunk = data_len / (2 * sizeof (NodeID));
+        }
+        if (n_relations_in_chunk == 0) return BULK_OK;
 
-		if(prop_count == 0) continue;
+        size_t k = 0;
+        data_idx = post_header_data_idx;
+        while (data_idx < data_len) {
+             I[k] = *(NodeID *)&data[data_idx];
+             data_idx += sizeof(NodeID);
+             J[k] = *(NodeID *)&data[data_idx];
+             data_idx += sizeof(NodeID);
+             ++k;
 
-		// Process and add relation properties
-		for(unsigned int i = 0; i < prop_count; i ++) {
-			SIValue value = _BulkInsert_ReadProperty(data, &data_idx);
-			// Cypher does not support NULL as a property value.
-			// If we encounter one here, simply skip it.
-			if(SI_TYPE(value) == T_NULL) continue;
-			GraphEntity_AddProperty((GraphEntity *)&e, prop_indicies[i], value);
-		}
-	}
+             if (prop_count > 0)
+                  for(unsigned int i = 0; i < prop_count; i ++)
+			_BulkInsert_ReadProperty(data, &data_idx);
+        }
+
+        EdgeID start_id = Graph_BulkConnectNodes (gc->g, I, J, n_relations_in_chunk, reltype_id);
+        // If -1, didn't change anything.  Probably should trigger garbage collection.
+        if (start_id == (EdgeID)-1) return BULK_OK;
+
+        /* Pre-allocate entity space.  Can shrink if NULLs appear. */
+        if (prop_count > 0) {
+             for (uint64_t id = start_id; id < start_id + n_relations_in_chunk; ++id) {
+                  Entity *en = DataBlock_GetItem (gc->g->edges, id);
+                  if (en) // Some may not have been "created" if not a multi-graph.
+                       en->properties = rm_malloc (prop_count * sizeof (EntityProperty));
+             }
+
+             uint64_t id = start_id;
+             data_idx = post_header_data_idx;
+             while (data_idx < data_len) {
+                  data_idx += 2 * sizeof (NodeID);
+                  Entity *en = DataBlock_GetItem (gc->g->edges, id);
+                  /* en could be NULL if this edge was deleted in a
+                     non-multi-graph.  If non-NULL, the properties are
+                     uninitialized, and prop_count == 0.  The
+                     properties still need "read" from data[] because
+                     a later edge may not be deleted.
+                  */
+                  ASSERT (en == NULL || en->prop_count == 0);
+                  int prop_idx = 0;
+                  for(unsigned int i = 0; i < prop_count; i++) {
+                       SIValue value = _BulkInsert_ReadProperty(data, &data_idx);
+                       // Cypher does not support NULL as a property value.
+                       // If we encounter one here, simply skip it.
+                       if(SI_TYPE(value) == T_NULL) continue;
+                       if (en) {
+                            en->properties[prop_idx].id = prop_indicies[i];
+                            en->properties[prop_idx].value = SI_CloneValue(value);
+                       }
+                       ++prop_idx;
+                  }
+                  if (en) {
+                       en->prop_count = prop_idx;
+                       if (prop_idx != prop_count) {
+                            if (en->properties) {
+                                 // Shrink-wrap the allocation.
+                                 EntityProperty *tmp = rm_realloc (en->properties, prop_idx * sizeof (*tmp));
+                                 ASSERT(tmp != NULL);
+                                 if (tmp != NULL)
+                                      en->properties = tmp; /* A "soft" failure.  The memory is there but wasted. */
+                            } else {
+                                 ASSERT(prop_idx == 0);
+                                 ASSERT(prop_count == 0);
+                            }
+                       }
+                  }
+                  ++id;
+             }
+        }
 
 	free(prop_indicies);
 	return BULK_OK;
@@ -186,7 +282,8 @@ int _BulkInsert_InsertNodes(RedisModuleCtx *ctx, GraphContext *gc, int token_cou
 }
 
 int _BulkInsert_Insert_Edges(RedisModuleCtx *ctx, GraphContext *gc, int token_count,
-							 RedisModuleString ***argv, int *argc) {
+                             RedisModuleString ***argv, int *argc,
+                             NodeID* I, NodeID* J) {
 	int rc;
 	for(int i = 0; i < token_count; i ++) {
 		size_t len;
@@ -194,14 +291,15 @@ int _BulkInsert_Insert_Edges(RedisModuleCtx *ctx, GraphContext *gc, int token_co
 		const char *data = RedisModule_StringPtrLen(**argv, &len);
 		*argv += 1;
 		*argc -= 1;
-		rc = _BulkInsert_ProcessRelationFile(ctx, gc, data, len);
+		rc = _BulkInsert_ProcessRelationFile(ctx, gc, data, len, I, J);
 		UNUSED(rc);
 		ASSERT(rc == BULK_OK);
 	}
 	return BULK_OK;
 }
 
-int BulkInsert(RedisModuleCtx *ctx, GraphContext *gc, RedisModuleString **argv, int argc) {
+int BulkInsert(RedisModuleCtx *ctx, GraphContext *gc, RedisModuleString **argv, int argc,
+               long long nodes_in_query, long long relations_in_query) {
 
 	if(argc < 2) {
 		RedisModule_ReplyWithError(ctx, "Bulk insert format error, failed to parse bulk insert sections.");
@@ -232,7 +330,11 @@ int BulkInsert(RedisModuleCtx *ctx, GraphContext *gc, RedisModuleString **argv, 
 	}
 
 	if(relation_token_count > 0) {
-		int rc = _BulkInsert_Insert_Edges(ctx, gc, relation_token_count, &argv, &argc);
+                NodeID *I, *J;  // Imported vertex scratch space.
+                I = rm_malloc (2 * relations_in_query * sizeof (*I));
+                if (!I) return BULK_FAIL;
+                J = &I[relations_in_query];
+		int rc = _BulkInsert_Insert_Edges(ctx, gc, relation_token_count, &argv, &argc, I, J);
 		if(rc != BULK_OK) {
 			return BULK_FAIL;
 		} else if(argc == 0) {

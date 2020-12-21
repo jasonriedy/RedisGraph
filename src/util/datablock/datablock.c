@@ -140,6 +140,30 @@ void *DataBlock_AllocateItem(DataBlock *dataBlock, uint64_t *idx) {
 	return ITEM_DATA(item_header);
 }
 
+uint64_t DataBlock_BulkAllocateItems(DataBlock *dataBlock, uint64_t n_to_alloc)
+/* Allocate n_to_alloc new items in dataBlock, returning the start
+   index.  Use this routine in bulk insertion and initial creation.
+   Hence, this routine does *not* back-fill deleted items. */
+{
+        const uint64_t start_idx = dataBlock->itemCount;
+	// Make sure we've got room for items.
+	if(dataBlock->itemCount + n_to_alloc >= dataBlock->itemCap) {
+		// Allocate twice as much items then we currently hold.
+		const uint newCap = dataBlock->itemCount * 2;
+		const uint requiredAdditionalBlocks = ITEM_COUNT_TO_BLOCK_COUNT(newCap);
+		_DataBlock_AddBlocks(dataBlock, requiredAdditionalBlocks);
+	}
+
+        const uint64_t end_idx = (dataBlock->itemCount += n_to_alloc);
+
+        for (uint64_t pos = start_idx; pos < end_idx; ++pos) {
+             DataBlockItemHeader *item_header = DataBlock_GetItemHeader(dataBlock, pos);
+             MARK_HEADER_AS_NOT_DELETED(item_header);
+        }
+
+	return start_idx;
+}
+
 void DataBlock_DeleteItem(DataBlock *dataBlock, uint64_t idx) {
 	ASSERT(dataBlock != NULL);
 	ASSERT(!_DataBlock_IndexOutOfBounds(dataBlock, idx));

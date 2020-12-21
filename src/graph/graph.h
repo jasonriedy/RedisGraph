@@ -100,6 +100,9 @@ void Graph_WriterLeave(Graph *g);
 /* Choose the current matrix synchronization policy. */
 void Graph_SetMatrixPolicy(Graph *g, MATRIX_POLICY policy);
 
+/* Retrieve the current matrix synchronization policy. */
+MATRIX_POLICY Graph_GetMatrixPolicy(const Graph *g);
+
 /* Synchronize and resize all matrices in graph. */
 void Graph_ApplyAllPending(Graph *g);
 
@@ -139,6 +142,12 @@ void Graph_CreateNode(
 	Node *n
 );
 
+/* Allocate n_to_alloc new nodes with label in the graph.  This
+   returns the starting node id and assumes sequential allocation of
+   ids.
+ */
+uint64_t Graph_BulkCreateNodes(Graph *g, const int label, const uint64_t n_to_alloc);
+
 // Connects source node to destination node.
 // Returns 1 if connection is formed, 0 otherwise.
 int Graph_ConnectNodes(
@@ -148,6 +157,10 @@ int Graph_ConnectNodes(
 	int r,              // Edge type.
 	Edge *e
 );
+
+// Connects I->J for each of the n_new_edges entries.
+// Returns the id of the first edge or (EdgeID)-1 if no new edges are allocated.
+EdgeID Graph_BulkConnectNodes(Graph *g, NodeID *I, NodeID *J, const size_t n_new_edges, int r);
 
 // Removes node and all of its connections within the graph.
 void Graph_DeleteNode(
