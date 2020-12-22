@@ -25,9 +25,12 @@ void _MatrixResizeToCapacity(const Graph *g, RG_Matrix m);
 // Creates a new matrix
 static RG_Matrix RG_Matrix_New(GrB_Type data_type, GrB_Index nrows, GrB_Index ncols) {
 	RG_Matrix matrix = rm_calloc(1, sizeof(_RG_Matrix));
+        ASSERT(matrix != NULL);
 
 	matrix->allow_multi_edge = true;
 
+        nrows = MAX(nrows, GRAPH_DEFAULT_NODE_CAP);
+        ncols = MAX(nrows, GRAPH_DEFAULT_NODE_CAP);
 	GrB_Info matrix_res = GrB_Matrix_new(&matrix->grb_matrix, data_type, nrows, ncols);
 	ASSERT(matrix_res == GrB_SUCCESS);
 
@@ -221,9 +224,12 @@ void _MatrixResizeToCapacity(const Graph *g, RG_Matrix matrix) {
 	GrB_Matrix m = RG_Matrix_Get_GrB_Matrix(matrix);
 	GrB_Index nrows;
 	GrB_Index ncols;
-	GrB_Matrix_ncols(&ncols, m);
-	GrB_Matrix_nrows(&nrows, m);
 	GrB_Index cap = _Graph_NodeCap(g);
+        GrB_Info info; UNUSED(info);
+	info = GrB_Matrix_ncols(&ncols, m);
+        ASSERT (info == GrB_SUCCESS);
+	info = GrB_Matrix_nrows(&nrows, m);
+        ASSERT (info == GrB_SUCCESS);
 
 	// This policy should only be used in a thread-safe context, so no locking is required.
 	if(ncols != cap || nrows != cap) {
@@ -335,7 +341,8 @@ Graph *Graph_New(size_t node_cap, size_t edge_cap) {
 size_t Graph_RequiredMatrixDim(const Graph *g) {
 	// Matrix dimensions should be at least:
 	// Number of nodes + number of deleted nodes.
-	return g->nodes->itemCount + array_len(g->nodes->deletedIdx);
+     size_t out = g->nodes->itemCount + array_len(g->nodes->deletedIdx);
+     return (out? out : 1); // All GraphBLAS dimensions must be > 0 by the spec.
 }
 
 size_t Graph_NodeCount(const Graph *g) {
@@ -1624,8 +1631,7 @@ int Graph_AddLabel(Graph *g) {
 
 int Graph_AddRelationType(Graph *g) {
 	ASSERT(g);
-
-	size_t dims = Graph_RequiredMatrixDim(g);
+	const size_t dims = MAX(Graph_RequiredMatrixDim(g), GRAPH_DEFAULT_NODE_CAP);
 	RG_Matrix m = RG_Matrix_New(GrB_UINT64, dims, dims);
 	g->relations = array_append(g->relations, m);
 	bool maintain_transpose;
