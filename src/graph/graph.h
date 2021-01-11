@@ -15,7 +15,7 @@
 #include "rax.h"
 #include "../util/datablock/datablock.h"
 #include "../util/datablock/datablock_iterator.h"
-#include "../../deps/GraphBLAS/Include/GraphBLAS.h"
+#include <GraphBLAS.h>
 
 #define GRAPH_DEFAULT_NODE_CAP 16384            // Default number of nodes a graph can hold before resizing.
 #define GRAPH_DEFAULT_EDGE_CAP 16384            // Default number of edges a graph can hold before resizing.

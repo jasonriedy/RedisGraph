@@ -192,7 +192,7 @@ static void NodeByLabelScanFree(OpBase *op) {
 	NodeByLabelScan *nodeByLabelScan = (NodeByLabelScan *)op;
 
 	if(nodeByLabelScan->iter) {
-		GxB_MatrixTupleIter_free(nodeByLabelScan->iter);
+		GxB_MatrixTupleIter_free(&nodeByLabelScan->iter);
 		nodeByLabelScan->iter = NULL;
 	}
 

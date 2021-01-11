@@ -10,7 +10,7 @@
 #include "node.h"
 #include "../../value.h"
 #include "graph_entity.h"
-#include "../../../deps/GraphBLAS/Include/GraphBLAS.h"
+#include <GraphBLAS.h>
 
 #define EDGE_LENGTH_INF UINT_MAX - 2
 

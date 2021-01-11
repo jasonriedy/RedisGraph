@@ -8,7 +8,7 @@
 #define GRAPH_ENTITY_H_
 
 #include "../../value.h"
-#include "../../../deps/GraphBLAS/Include/GraphBLAS.h"
+#include <GraphBLAS.h>
 
 #define ATTRIBUTE_NOTFOUND USHRT_MAX
 

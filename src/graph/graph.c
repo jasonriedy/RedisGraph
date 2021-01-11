@@ -10,6 +10,7 @@
 #include "../util/arr.h"
 #include "../util/qsort.h"
 #include "../GraphBLASExt/GxB_Delete.h"
+#include "../GraphBLASExt/GxB_Matrix_tuple_iter.h"
 #include "../util/rmalloc.h"
 #include "../util/datablock/oo_datablock.h"
 
@@ -263,12 +264,9 @@ void _MatrixSynchronize(const Graph *g, RG_Matrix rg_matrix) {
 	// Lock the matrix.
 	RG_Matrix_Lock(rg_matrix);
 
-	bool pending = false;
-	GxB_Matrix_Pending(m, &pending);
-
 	// If the matrix has pending operations or requires
 	// a resize, enter critical section.
-	if(pending || (n_rows != dims) || (n_cols != dims)) {
+	if((n_rows != dims) || (n_cols != dims)) {
 		// Double-check if resize is necessary.
 		GrB_Matrix_nrows(&n_rows, m);
 		GrB_Matrix_ncols(&n_cols, m);
@@ -669,7 +667,7 @@ void Graph_GetNodeEdges(const Graph *g, const Node *n, GRAPH_EDGE_DIR dir, int e
 	GrB_Matrix M;
 	NodeID srcNodeID;
 	NodeID destNodeID;
-	GxB_MatrixTupleIter *tupleIter;
+	GxB_MatrixTupleIter tupleIter;
 
 	if(edgeType == GRAPH_UNKNOWN_RELATION) return;
 
@@ -692,7 +690,7 @@ void Graph_GetNodeEdges(const Graph *g, const Node *n, GRAPH_EDGE_DIR dir, int e
 			// Collect all edges connecting this source node to each of its destinations.
 			Graph_GetEdgesConnectingNodes(g, srcNodeID, destNodeID, edgeType, edges);
 		}
-		GxB_MatrixTupleIter_free(tupleIter);
+		GxB_MatrixTupleIter_free(&tupleIter);
 	}
 
 	// Incoming.
@@ -718,7 +716,7 @@ void Graph_GetNodeEdges(const Graph *g, const Node *n, GRAPH_EDGE_DIR dir, int e
 		}
 
 		// Clean up
-		GxB_MatrixTupleIter_free(tupleIter);
+		GxB_MatrixTupleIter_free(&tupleIter);
 	}
 }
 
@@ -906,8 +904,8 @@ static void _BulkDeleteNodes(Graph *g, Node *nodes, uint node_count,
 	GrB_Matrix adj;                     // Adjacency matrix.
 	GrB_Matrix tadj;                    // Transposed adjacency matrix.
 	GrB_Descriptor desc;                // GraphBLAS descriptor.
-	GxB_MatrixTupleIter *adj_iter;      // iterator over the adjacency matrix.
-	GxB_MatrixTupleIter *tadj_iter;     // iterator over the transposed adjacency matrix.
+	GxB_MatrixTupleIter adj_iter;      // iterator over the adjacency matrix.
+	GxB_MatrixTupleIter tadj_iter;     // iterator over the transposed adjacency matrix.
 
 	GrB_Descriptor_new(&desc);
 	adj = Graph_GetAdjacencyMatrix(g);
@@ -1048,8 +1046,8 @@ static void _BulkDeleteNodes(Graph *g, Node *nodes, uint node_count,
 	GrB_free(&Mask);
 	GrB_free(&thunk);
 	GrB_free(&Nodes);
-	GxB_MatrixTupleIter_free(adj_iter);
-	GxB_MatrixTupleIter_free(tadj_iter);
+	GxB_MatrixTupleIter_free(&adj_iter);
+	GxB_MatrixTupleIter_free(&tadj_iter);
 }
 
 static void _BulkDeleteEdges(Graph *g, Edge *edges, size_t edge_count) {

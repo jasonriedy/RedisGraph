@@ -23,7 +23,7 @@ extern "C" {
 #include "../../src/execution_plan/execution_plan.h"
 #include "../../src/arithmetic/algebraic_expression.h"
 #include "../../src/arithmetic/algebraic_expression/utils.h"
-#include "../../deps/GraphBLAS/Include/GraphBLAS.h"
+#include <GraphBLAS.h>
 
 extern AR_ExpNode **_BuildReturnExpressions(const cypher_astnode_t *ret_clause, AST *ast);
 
