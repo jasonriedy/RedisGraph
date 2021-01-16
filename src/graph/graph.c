@@ -264,6 +264,8 @@ void _MatrixSynchronize(const Graph *g, RG_Matrix rg_matrix) {
 	// Lock the matrix.
 	RG_Matrix_Lock(rg_matrix);
 
+	GrB_wait(); // Apply all pending operations.
+
 	// If the matrix has pending operations or requires
 	// a resize, enter critical section.
 	if((n_rows != dims) || (n_cols != dims)) {
@@ -1019,61 +1021,73 @@ cleanup:
  * to/from given node N, depending on given direction. */
 void Graph_GetNodeEdges(const Graph *g, const Node *n, GRAPH_EDGE_DIR dir, int edgeType,
 						Edge **edges) {
-	ASSERT(g && n && edges);
+	assert(g && n && edges);
+        GrB_Descriptor desc;
 	GrB_Matrix M;
+        GrB_Vector v;
 	NodeID srcNodeID;
 	NodeID destNodeID;
-	GxB_MatrixTupleIter tupleIter;
+        GrB_Index nrows, ncols;
+        GrB_Info info;
 
 	if(edgeType == GRAPH_UNKNOWN_RELATION) return;
 
-	// Outgoing.
-	if(dir == GRAPH_EDGE_DIR_OUTGOING || dir == GRAPH_EDGE_DIR_BOTH) {
-		/* If a relationship type is specified, retrieve the appropriate relation matrix;
-		 * otherwise use the overall adjacency matrix. */
-		if(edgeType == GRAPH_NO_RELATION) M = Graph_GetAdjacencyMatrix(g);
-		else M = Graph_GetRelationMatrix(g, edgeType);
+        /* If a relationship type is specified, retrieve the appropriate relation matrix;
+         * otherwise use the overall adjacency matrix. */
+        if(edgeType == GRAPH_NO_RELATION) M = Graph_GetAdjacencyMatrix(g);
+        else M = Graph_GetRelationMatrix(g, edgeType);
 
-		/* Construct an iterator to traverse the source node's row, which contains
-		 * all outgoing edges. */
-		GxB_MatrixTupleIter_new(&tupleIter, M);
+        GrB_Descriptor_new (&desc) ;
+        GrB_Descriptor_set (desc, GrB_OUTP, GrB_REPLACE) ;
+
+        // Outgoing.
+	if(dir == GRAPH_EDGE_DIR_OUTGOING || dir == GRAPH_EDGE_DIR_BOTH) {
 		srcNodeID = ENTITY_GET_ID(n);
-		GxB_MatrixTupleIter_iterate_row(tupleIter, srcNodeID);
-		while(true) {
-			bool depleted = false;
-			GxB_MatrixTupleIter_next(tupleIter, NULL, &destNodeID, &depleted);
-			if(depleted) break;
-			// Collect all edges connecting this source node to each of its destinations.
-			Graph_GetEdgesConnectingNodes(g, srcNodeID, destNodeID, edgeType, edges);
-		}
-		GxB_MatrixTupleIter_free(&tupleIter);
+                GrB_Matrix_nrows (&nrows, M);
+                GrB_Vector_new (&v, GrB_BOOL, nrows);
+                GrB_Vector_setElement_BOOL (v, true, srcNodeID);
+                GrB_vxm (v, GrB_NULL, GrB_NULL, GxB_LOR_LAND_BOOL, v, M, desc) ;
+
+                GrB_Type vtype;
+                GrB_Index n, nvals, *I;
+                bool *X;
+                GrB_wait();
+                GxB_Vector_export (&v, &vtype, &n, &nvals, &I, (void**)&X, GrB_NULL);
+                assert (vtype == GrB_BOOL);
+
+                for (GrB_Index k = 0; k < nvals; ++k)
+                        Graph_GetEdgesConnectingNodes(g, srcNodeID, I[k], edgeType, edges);
+
+                free (X);
+                free (I);
+                // v is freed in GxB_Vector_export
 	}
 
 	// Incoming.
 	if(dir == GRAPH_EDGE_DIR_INCOMING || dir == GRAPH_EDGE_DIR_BOTH) {
-		/* Retrieve the transposed adjacency matrix, regardless of whether or not
-		 * a relationship type is specified. */
-		M = Graph_GetTransposedAdjacencyMatrix(g);
-
-		/* Construct an iterator to traverse the node's row, which in the transposed
-		 * adjacency matrix contains all incoming edges. */
-		GxB_MatrixTupleIter_new(&tupleIter, M);
+                GrB_Descriptor_set (desc, GrB_INP1, GrB_TRAN);
 		destNodeID = ENTITY_GET_ID(n);
-		GxB_MatrixTupleIter_iterate_row(tupleIter, destNodeID);
+                GrB_Matrix_ncols (&ncols, M);
+                GrB_Vector_new (&v, GrB_BOOL, ncols);
+                GrB_Vector_setElement_BOOL (v, true, destNodeID);
+                GrB_vxm (v, GrB_NULL, GrB_NULL, GxB_LOR_LAND_BOOL, v, M, desc) ;
 
-		while(true) {
-			bool depleted = false;
-			GxB_MatrixTupleIter_next(tupleIter, NULL, &srcNodeID, &depleted);
-			if(depleted) break;
-			/* Collect all edges connecting this destination node to each of its sources.
-			 * This call will only collect edges of the appropriate relationship type,
-			 * if one is specified. */
-			Graph_GetEdgesConnectingNodes(g, srcNodeID, destNodeID, edgeType, edges);
-		}
+                GrB_Type vtype;
+                GrB_Index n, nvals, *I;
+                bool *X;
+                GrB_wait();
+                GxB_Vector_export (&v, &vtype, &n, &nvals, &I, (void**)&X, GrB_NULL);
+                assert (vtype == GrB_BOOL);
 
-		// Clean up
-		GxB_MatrixTupleIter_free(&tupleIter);
+                for (GrB_Index k = 0; k < nvals; ++k)
+                        Graph_GetEdgesConnectingNodes(g, I[k], destNodeID, edgeType, edges);
+
+                free (X);
+                free (I);
+                // v is freed in GxB_Vector_export
 	}
+
+        GrB_free (&desc);
 }
 
 /* Removes an edge from Graph and updates graph relevent matrices. */
