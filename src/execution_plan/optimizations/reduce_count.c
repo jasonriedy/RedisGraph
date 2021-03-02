@@ -4,6 +4,7 @@
 * This file is available under the Redis Labs Source Available License Agreement
 */
 
+#include "RG.h"
 #include "reduce_count.h"
 #include "../ops/ops.h"
 #include "../../util/arr.h"
@@ -11,7 +12,12 @@
 #include "../../arithmetic/aggregate_funcs/agg_funcs.h"
 #include "../execution_plan_build/execution_plan_modify.h"
 
-static GrB_UnaryOp countMultipleEdges = NULL;
+#if defined(_OPENMP)
+#define OMP_(x)
+#define OMP(x) OMP_(omp #x)
+#else
+#define OMP(x)
+#endif
 
 static int _identifyResultAndAggregateOps(OpBase *root, OpResult **opResult,
 										  OpAggregate **opAggregate) {
@@ -144,51 +150,71 @@ static bool _identifyEdgeCountPattern(OpBase *root, OpResult **opResult, OpAggre
 	return true;
 }
 
-void _countEdges(void *z, const void *x) {
-	uint64_t *entry = (uint64_t *) x;
-	if(SINGLE_EDGE(*entry)) {
-		*(uint64_t *)z = 1;
-	} else {
-		// Multiple edges
-		EdgeID *ids = (EdgeID *)(*entry);
-		*(uint64_t *)z = array_len(ids);
-	}
-}
-
 uint64_t _countRelationshipEdges(GrB_Matrix M) {
-	// Create Unary operation only once.
-	if(!countMultipleEdges) {
-		GrB_UnaryOp_new(&countMultipleEdges, _countEdges, GrB_UINT64, GrB_UINT64);
-	}
-
 	/* TODO: to avoid this entire process keep track if
 	 * M contains multiple edges between two given nodes
 	 * if there are no multiple edges,
 	 * i.e. `a` is connected to `b` with multiple edges of type R
-	 * then all we need to do is return M's nnz.
-	 * Otherwise create a new matrix A, where A[i,j] = x
-	 * where x is the number of edges in M[i,j]
-	 * then reduce A using the plus (sum) monoid. */
+         * then all we need to do is return M's nnz.
+         * Otherwise create a new matrix A, where A[i,j] = x
+         * where x is the number of edges in M[i,j]
 
-	GrB_Index nrows;
-	GrB_Index ncols;
-	GrB_Matrix_nrows(&nrows, M);
-	GrB_Matrix_ncols(&ncols, M);
+        /* 
+           Instead of a user-defined select op, rely on entry <
+           MSB_MASK --> multiple relations, and entry >= MSB_MASK -->
+           one relation.
+
+           This version assumes the relation arrays live on the host
+           and are not accessible by the accelerator.  Otherwise the
+           original GrB_apply version is better.
+        */
+
+        GrB_Index out = 0;
+        uint64_t *vals = NULL;
+
+        GrB_Info info; UNUSED(info);
+	GrB_Index nrows, ncols, nvals;
+	info = GrB_Matrix_nrows(&nrows, M);
+        ASSERT(info == GrB_SUCCESS);
+	info = GrB_Matrix_ncols(&ncols, M);
+        ASSERT(info == GrB_SUCCESS);
+	info = GrB_Matrix_ncols(&nvals, M);
+        ASSERT(info == GrB_SUCCESS);
 
 	GrB_Matrix A;
 	GrB_Matrix_new(&A, GrB_UINT64, nrows, ncols);
+        GxB_Scalar edge_msb;
+        info = GxB_Scalar_new (&edge_msb, GrB_UINT64);
+        ASSERT(info == GrB_SUCCESS);
+        info = GxB_Scalar_setElement (edge_msb, MSB_MASK);
+        ASSERT(info == GrB_SUCCESS);
 
-	// A[i,j] = # of edges in M[i,j].
-	GrB_Matrix_apply(A, GrB_NULL, GrB_NULL,
-					 countMultipleEdges, M, GrB_NULL);
+        info = GxB_select (A, GrB_NULL, GrB_NULL, GxB_GE_THUNK, M, edge_msb, GrB_NULL);
+        ASSERT(info == GrB_SUCCESS);
+        info = GrB_Matrix_nvals (&out, A); // all single edges
+        ASSERT(info == GrB_SUCCESS);
 
-	uint64_t edges = 0;
-	// Sum(A)
-	GrB_Matrix_reduce_UINT64(&edges, GrB_NULL,
-							 GxB_PLUS_UINT64_MONOID, A, GrB_NULL);
+        if (out == nvals) goto done; // only single edges
+        GrB_Index nvals2;
 
-	GrB_free(&A);
-	return edges;
+        info = GxB_select (A, GrB_NULL, GrB_NULL, GxB_LT_THUNK, M, edge_msb, GrB_DESC_R);
+        ASSERT(info == GrB_SUCCESS);
+
+        info = GrB_Matrix_nvals (&nvals, A);
+        ASSERT (nvals != 0);
+
+        vals = (uint64_t*)array_newlen (uint64_t, nvals);
+        nvals2 = nvals;
+        info = GrB_Matrix_extractTuples (GrB_NULL, GrB_NULL, vals, &nvals2, A);
+        ASSERT(nvals == nvals2);
+
+        OMP(parallel for reduce(+: out))
+             for (size_t k = 0; k < nvals2; ++k)
+                  out += array_len ((uint64_t*)vals[k]);
+done:
+        array_free (vals);
+        GrB_free (&A);
+        return out;
 }
 
 void _reduceEdgeCount(ExecutionPlan *plan) {
